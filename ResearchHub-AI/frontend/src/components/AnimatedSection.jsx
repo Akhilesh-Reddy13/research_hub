@@ -20,20 +20,13 @@ export default function AnimatedSection({
   return (
     <motion.section
       id={id}
-      className={`scroll-section min-h-screen w-full will-change-transform ${className}`}
-      style={{
-        perspective: 1000,
-        transformStyle: 'preserve-3d',
-        ...style,
-      }}
+      className={`scroll-section min-h-screen w-full ${className}`}
+      style={style}
       variants={sectionVariants}
       initial={disableInitialAnimation ? "visible" : "hidden"}
       whileInView="visible"
       viewport={sectionViewportConfig}
     >
-      {/* Page shadow overlay for depth illusion */}
-      <div className="page-shadow" />
-      
       {/* Content wrapper */}
       <div className="relative z-10 h-full w-full">
         {children}
