@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# Environment variables (contains secrets!)
+.env
+
+# Database files
+*.db
+*.sqlite3
+researchhub.db
+
+# ChromaDB vector store (can be rebuilt by re-uploading PDFs)
+chroma_data/
+
+# Logs & misc
+*.log
+pip_output.txt
+test_gemini_payload.py
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# OS
+Thumbs.db
