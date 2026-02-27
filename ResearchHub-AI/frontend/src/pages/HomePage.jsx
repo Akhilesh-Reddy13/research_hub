@@ -135,12 +135,6 @@ export default function HomePage() {
             <KnowledgeGraph scrollProgress={0} />
             
             {/* Floating stats badges */}
-            <div className="absolute top-10 right-10 px-4 py-2 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
-              <span className="text-sm text-gray-300">
-                <span className="text-blue-400 font-bold">1M+</span> Papers indexed
-              </span>
-            </div>
-            
             <div className="absolute bottom-20 left-10 px-4 py-2 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
               <span className="text-sm text-gray-300">
                 <span className="text-purple-400 font-bold">AI</span> Powered insights

@@ -13,12 +13,6 @@ const navLinks = [
   { to: '/docspace', label: 'Doc Space' },
 ];
 
-// Public nav links for non-authenticated users
-const publicNavLinks = [
-  { to: '/#features', label: 'Features' },
-  { to: '/#insights', label: 'AI Insights' },
-];
-
 export default function Navbar() {
   const { isAuthenticated, user, logout } = useAuth();
   const location = useLocation();
@@ -88,7 +82,7 @@ export default function Navbar() {
 
           {/* Center nav links - Desktop */}
           <div className="hidden md:flex items-center space-x-1">
-            {(isAuthenticated ? navLinks : publicNavLinks).map((link) => (
+            {navLinks.map((link) => (
               <Link
                 key={link.to}
                 to={link.to}
@@ -157,7 +151,7 @@ export default function Navbar() {
               transition={{ duration: 0.2 }}
             >
               <div className="p-3 space-y-1">
-                {(isAuthenticated ? navLinks : publicNavLinks).map((link) => (
+                {navLinks.map((link) => (
                   <Link
                     key={link.to}
                     to={link.to}
