@@ -20,7 +20,7 @@ export default function App() {
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Navbar />
         <Toaster position="top-right" />
-        <main className="min-h-screen bg-gray-50">
+        <main className="min-h-screen">
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
