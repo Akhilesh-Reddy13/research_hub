@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.sql import func
 from utils.database import Base
 
@@ -11,4 +11,5 @@ class Conversation(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     user_message = Column(Text, nullable=False)
     ai_response = Column(Text, nullable=False)
+    is_web_search = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, server_default=func.now())

@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import hashlib
 from groq import Groq
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ _response_cache: dict[str, tuple[str, float]] = {}  # hash → (response, timest
 _CACHE_TTL = 600  # cache responses for 10 minutes
 
 MODEL_NAME = "llama-3.3-70b-versatile"
+BROWSER_SEARCH_MODEL = "openai/gpt-oss-20b"
 
 # Create client
 _client = Groq(api_key=_api_keys[0]) if _api_keys else None
@@ -118,6 +120,126 @@ def get_groq_response(system_prompt: str, user_prompt: str) -> str:
                         "Rate limit exceeded. Please wait a minute before trying again."
                     )
                 raise  # non-rate-limit error
+        else:
+            tried_keys += 1
+            if not _rotate_key():
+                raise QuotaExceededError(
+                    "Rate limit exceeded. Please wait a minute before trying again."
+                )
+
+    raise QuotaExceededError(
+        "All API keys exhausted. Please wait a minute or add more keys to GROQ_API_KEY in .env (comma-separated)."
+    )
+
+
+def get_groq_browser_search_response(user_query: str) -> str:
+    """Call Groq with browser_search tool using openai/gpt-oss-20b model.
+    Returns real-time web research with citations. No caching (results should be fresh)."""
+    global _call_count, _last_request_time
+
+    if not _client:
+        raise QuotaExceededError("No GROQ_API_KEY configured in .env")
+
+    _call_count += 1
+    print(f"\n[GROQ BROWSER SEARCH #{_call_count}] {datetime.now().strftime('%H:%M:%S')}")
+    print(f"  Model: {BROWSER_SEARCH_MODEL}")
+    print(f"  Query: {user_query[:100]}...")
+
+    # --- Rate limiting ---
+    elapsed = time.time() - _last_request_time
+    if elapsed < _MIN_REQUEST_GAP:
+        wait_time = _MIN_REQUEST_GAP - elapsed
+        print(f"  Rate limiter: waiting {wait_time:.1f}s before calling API")
+        time.sleep(wait_time)
+
+    system_prompt = (
+        "You are an expert research assistant with access to real-time web search. "
+        "Use browser search to find the most relevant, up-to-date information. "
+        "Summarize your findings clearly and concisely. "
+        "Cite ALL sources with their URLs so the user can verify. "
+        "Prefer academic papers, trusted publications, and official documentation. "
+        "Structure your response with clear headings and bullet points when appropriate."
+    )
+
+    tried_keys = 0
+    max_retries = 2
+
+    while tried_keys < len(_api_keys):
+        for attempt in range(max_retries + 1):
+            try:
+                _last_request_time = time.time()
+                chat_completion = _client.chat.completions.create(
+                    model=BROWSER_SEARCH_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_query},
+                    ],
+                    tools=[{"type": "browser_search"}],
+                    temperature=0.3,
+                    max_completion_tokens=2048,
+                )
+
+                # Debug: log full response structure
+                message = chat_completion.choices[0].message
+                print(f"  Response finish_reason: {chat_completion.choices[0].finish_reason}")
+                print(f"  Message content type: {type(message.content)}, length: {len(message.content) if message.content else 0}")
+
+                # Check for tool_calls — if model returned tool calls instead of content,
+                # the executed_tools results may be in the response or we need to extract them
+                if hasattr(message, 'tool_calls') and message.tool_calls:
+                    print(f"  Tool calls found: {len(message.tool_calls)}")
+                    for tc in message.tool_calls:
+                        print(f"    Tool: {tc.function.name if hasattr(tc, 'function') else tc.type}")
+
+                # Try to get content — for built-in tools, Groq executes server-side
+                # and returns final content directly
+                result = message.content
+
+                # If content is None or empty, try to extract from executed_tools
+                if not result:
+                    # Log entire response for debugging
+                    print(f"  [DEBUG] Full response object keys: {dir(chat_completion.choices[0])}")
+                    print(f"  [DEBUG] Message keys: {dir(message)}")
+
+                    # Some Groq responses include executed_tools with results
+                    if hasattr(chat_completion, 'executed_tools') and chat_completion.executed_tools:
+                        print(f"  Found executed_tools: {len(chat_completion.executed_tools)}")
+                        parts = []
+                        for et in chat_completion.executed_tools:
+                            if hasattr(et, 'output'):
+                                parts.append(str(et.output))
+                        if parts:
+                            result = "\n".join(parts)
+
+                # If still empty, try dumping the raw response
+                if not result:
+                    try:
+                        raw = chat_completion.model_dump()
+                        print(f"  [DEBUG] Raw response dump: {json.dumps(raw, indent=2, default=str)[:2000]}")
+                    except Exception as dump_err:
+                        print(f"  [DEBUG] Could not dump response: {dump_err}")
+
+                if not result:
+                    result = "Browser search returned no content. The model may not have generated a response. Please try rephrasing your query."
+
+                print(f"  Browser search completed — {len(result)} chars returned")
+                return result
+            except Exception as e:
+                error_msg = str(e)
+                is_rate_limit = "429" in error_msg or "rate" in error_msg.lower() or "quota" in error_msg.lower() or "limit" in error_msg.lower()
+                if is_rate_limit and attempt < max_retries:
+                    backoff = (attempt + 1) * 5
+                    print(f"  429 rate limit — retrying in {backoff}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(backoff)
+                    continue
+                elif is_rate_limit:
+                    tried_keys += 1
+                    if _rotate_key():
+                        break
+                    raise QuotaExceededError(
+                        "Rate limit exceeded. Please wait a minute before trying again."
+                    )
+                raise
         else:
             tried_keys += 1
             if not _rotate_key():
