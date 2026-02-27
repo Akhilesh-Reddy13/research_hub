@@ -46,3 +46,5 @@ dist/
 
 # OS
 Thumbs.db
+
+server_log.txt

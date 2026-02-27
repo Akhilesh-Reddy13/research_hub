@@ -31,7 +31,7 @@ class ToolRequest(BaseModel):
 
 # ---------- Endpoints ----------
 
-@router.post("/")
+@router.post("")
 async def chat(
     body: ChatMessage,
     db: AsyncSession = Depends(get_db),

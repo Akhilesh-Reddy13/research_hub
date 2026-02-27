@@ -45,7 +45,13 @@ export default function SearchPage() {
     if (!selectedWs || !importModal) return;
     try {
       await api.post('/papers/import', {
-        ...importModal,
+        title: importModal.title,
+        authors: importModal.authors,
+        abstract: importModal.abstract,
+        url: importModal.url,
+        doi: importModal.doi,
+        published_date: importModal.published_date,
+        pdf_url: importModal.pdf_url || '',
         workspace_id: parseInt(selectedWs),
       });
       toast.success('Paper imported!');

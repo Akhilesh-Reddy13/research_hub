@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 from utils.database import get_db
 from utils.auth_utils import get_current_user
+from utils import vector_store
 from models.user import User
 from models.workspace import Workspace
 from models.paper import Paper
@@ -27,7 +28,7 @@ class WorkspaceUpdate(BaseModel):
 
 # ---------- Endpoints ----------
 
-@router.post("/")
+@router.post("")
 async def create_workspace(
     body: WorkspaceCreate,
     db: AsyncSession = Depends(get_db),
@@ -50,7 +51,7 @@ async def create_workspace(
     }
 
 
-@router.get("/")
+@router.get("")
 async def list_workspaces(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -158,6 +159,17 @@ async def delete_workspace(
     workspace = result.scalar_one_or_none()
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Clean up ChromaDB embeddings for all papers in this workspace
+    papers_result = await db.execute(
+        select(Paper).where(Paper.workspace_id == workspace_id)
+    )
+    papers = papers_result.scalars().all()
+    for paper in papers:
+        try:
+            vector_store.delete_paper(paper.id)
+        except Exception as e:
+            print(f"[WARNING] Failed to delete embeddings for paper {paper.id}: {e}")
 
     # Delete associated conversations and papers first
     await db.execute(

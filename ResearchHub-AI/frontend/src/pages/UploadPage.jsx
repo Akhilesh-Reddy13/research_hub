@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Upload as UploadIcon, Loader2 } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import FileUpload from '../components/FileUpload';
 
 export default function UploadPage() {
+  const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState([]);
   const [selectedWs, setSelectedWs] = useState('');
   const [file, setFile] = useState(null);
@@ -35,15 +37,14 @@ export default function UploadPage() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('workspace_id', selectedWs);
+    console.log(formData);
 
     setUploading(true);
     try {
-      await api.post('/papers/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      await api.post('/papers/upload', formData);
       toast.success('PDF uploaded successfully!');
-      setFile(null);
-      setSelectedWs('');
+      // Navigate to the workspace so the user can see the uploaded paper
+      navigate(`/workspace/${selectedWs}`);
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Upload failed');
     } finally {

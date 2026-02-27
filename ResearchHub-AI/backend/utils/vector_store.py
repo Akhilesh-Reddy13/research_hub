@@ -91,6 +91,7 @@ def _chunk_text(text: str) -> list[str]:
 
 def add_paper(paper_id: int, text: str) -> int:
     """Chunk and embed a paper's text content into ChromaDB.
+    Uses upsert so re-uploads overwrite existing chunks atomically.
     Returns the number of chunks created."""
     collection = _get_collection()
 
@@ -99,17 +100,26 @@ def add_paper(paper_id: int, text: str) -> int:
         print(f"[VECTOR STORE] Paper {paper_id}: no text to embed")
         return 0
 
-    # First, remove any existing chunks for this paper (in case of re-upload)
-    delete_paper(paper_id)
+    # Remove any excess old chunks beyond the new count (handles re-upload
+    # where the new PDF has fewer chunks than the old one)
+    try:
+        existing = collection.get(where={"paper_id": paper_id})
+        old_ids = set(existing["ids"])
+        new_ids = {f"paper_{paper_id}_chunk_{i}" for i in range(len(chunks))}
+        stale_ids = list(old_ids - new_ids)
+        if stale_ids:
+            collection.delete(ids=stale_ids)
+    except Exception:
+        pass  # no existing chunks — fine
 
     ids = [f"paper_{paper_id}_chunk_{i}" for i in range(len(chunks))]
     metadatas = [{"paper_id": paper_id, "chunk_index": i} for i in range(len(chunks))]
 
-    # ChromaDB has a batch size limit, process in batches of 100
+    # ChromaDB batch limit — process in batches of 100
     batch_size = 100
     for batch_start in range(0, len(chunks), batch_size):
         batch_end = min(batch_start + batch_size, len(chunks))
-        collection.add(
+        collection.upsert(
             ids=ids[batch_start:batch_end],
             documents=chunks[batch_start:batch_end],
             metadatas=metadatas[batch_start:batch_end],
@@ -125,9 +135,14 @@ def query_paper(paper_id: int, query: str, n_results: int = 5) -> list[str]:
     collection = _get_collection()
 
     try:
+        # Clamp n_results to available chunk count to avoid ChromaDB errors
+        available = collection.count()
+        if available == 0:
+            return []
+        safe_n = min(n_results, available)
         results = collection.query(
             query_texts=[query],
-            n_results=n_results,
+            n_results=safe_n,
             where={"paper_id": paper_id},
         )
     except Exception as e:
@@ -140,22 +155,53 @@ def query_paper(paper_id: int, query: str, n_results: int = 5) -> list[str]:
 
 def query_papers(paper_ids: list[int], query: str, n_results: int = 5) -> dict[int, list[str]]:
     """Retrieve relevant chunks across multiple papers.
+    Uses a single query with $in filter for efficiency.
     Returns a dict mapping paper_id → list of relevant chunks."""
+    if not paper_ids:
+        return {}
+
     collection = _get_collection()
     result_map: dict[int, list[str]] = {}
 
-    for pid in paper_ids:
-        try:
-            results = collection.query(
-                query_texts=[query],
-                n_results=n_results,
-                where={"paper_id": pid},
-            )
-            docs = results.get("documents", [[]])[0]
-            if docs:
-                result_map[pid] = docs
-        except Exception as e:
-            print(f"[VECTOR STORE] Query failed for paper {pid}: {e}")
+    try:
+        total = collection.count()
+        if total == 0:
+            return {}
+        # Single query with $in filter instead of N separate queries
+        safe_n = min(n_results * len(paper_ids), total)
+        results = collection.query(
+            query_texts=[query],
+            n_results=safe_n,
+            where={"paper_id": {"$in": paper_ids}},
+        )
+        docs = results.get("documents", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
+        for doc, meta in zip(docs, metas):
+            pid = meta.get("paper_id")
+            if pid is not None:
+                result_map.setdefault(pid, []).append(doc)
+        # Trim each paper's results to n_results
+        for pid in result_map:
+            result_map[pid] = result_map[pid][:n_results]
+    except Exception as e:
+        print(f"[VECTOR STORE] Batch query failed, falling back to per-paper: {e}")
+        # Fallback: query one paper at a time
+        for pid in paper_ids:
+            try:
+                chunk_count = collection.count()
+                if chunk_count == 0:
+                    continue
+                safe_n = min(n_results, chunk_count)
+                results = collection.query(
+                    query_texts=[query],
+                    n_results=safe_n,
+                    where={"paper_id": pid},
+                )
+                docs = results.get("documents", [[]])[0]
+                if docs:
+                    result_map[pid] = docs
+            except Exception as inner_e:
+                print(f"[VECTOR STORE] Query failed for paper {pid}: {inner_e}")
 
     return result_map
 

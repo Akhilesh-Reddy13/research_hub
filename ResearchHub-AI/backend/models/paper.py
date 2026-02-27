@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, LargeBinary
 from sqlalchemy.sql import func
 from utils.database import Base
 
@@ -14,6 +14,7 @@ class Paper(Base):
     doi = Column(String(255), nullable=True)
     published_date = Column(String(50), nullable=True)
     content = Column(Text, nullable=True)
+    pdf_data = Column(LargeBinary, nullable=True)  # raw PDF bytes for preview/download
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
     imported_at = Column(DateTime, server_default=func.now())
