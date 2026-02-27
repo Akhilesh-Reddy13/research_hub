@@ -21,6 +21,7 @@ router = APIRouter()
 class ChatMessage(BaseModel):
     message: str
     workspace_id: int
+    paper_ids: list[int] | None = None  # When set, only these papers are used as context
 
 
 class ToolRequest(BaseModel):
@@ -48,10 +49,18 @@ async def chat(
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    # Fetch all papers in the workspace
-    papers_result = await db.execute(
-        select(Paper).where(Paper.workspace_id == body.workspace_id)
-    )
+    # Fetch papers — only selected ones if paper_ids provided, else all in workspace
+    if body.paper_ids:
+        papers_result = await db.execute(
+            select(Paper).where(
+                Paper.id.in_(body.paper_ids),
+                Paper.workspace_id == body.workspace_id,
+            )
+        )
+    else:
+        papers_result = await db.execute(
+            select(Paper).where(Paper.workspace_id == body.workspace_id)
+        )
     papers = papers_result.scalars().all()
 
     # Retrieve relevant chunks from vector store for papers that have embeddings
@@ -169,7 +178,7 @@ async def run_ai_tool(
                 "findings": "key findings, results, conclusions, contributions",
             }.get(body.tool, body.tool)
             retrieved_chunks = vector_store.query_papers(
-                paper_ids_with_content, query_hint, n_results=5
+                paper_ids_with_content, query_hint, n_results=20
             )
         except Exception as e:
             print(f"[WARNING] Vector retrieval failed: {e}")

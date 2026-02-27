@@ -345,6 +345,51 @@ async def get_paper_pdf(
     )
 
 
+@router.get("/{paper_id}/preview")
+async def get_paper_content_preview(
+    paper_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return a text-based content preview for a paper.
+
+    Priority: abstract → stored content (first 1500 chars) → vector store chunks.
+    Used by the frontend fallback when the PDF cannot be rendered inline.
+    """
+    result = await db.execute(
+        select(Paper).where(Paper.id == paper_id, Paper.user_id == current_user.id)
+    )
+    paper = result.scalar_one_or_none()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    preview_text = ""
+
+    # 1. Use stored content (extracted PDF text)
+    if paper.content and paper.content.strip():
+        preview_text = paper.content.strip()
+    else:
+        # 2. Try vector store chunks as last resort
+        try:
+            chunks = vector_store.query_paper(
+                paper.id, paper.title or "summary overview", n_results=10
+            )
+            if chunks:
+                preview_text = "\n\n".join(chunks)
+        except Exception as e:
+            print(f"[PREVIEW] Vector store query failed for paper {paper_id}: {e}")
+
+    return {
+        "title": paper.title,
+        "authors": paper.authors,
+        "published_date": paper.published_date,
+        "doi": paper.doi,
+        "abstract": paper.abstract or "",
+        "content_preview": preview_text[:3000] if preview_text else "",
+        "has_full_content": len(preview_text) > 3000 if preview_text else False,
+    }
+
+
 @router.get("/{paper_id}/download")
 async def download_paper_pdf(
     paper_id: int,
@@ -365,6 +410,75 @@ async def download_paper_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+class ProxyPdfRequest(BaseModel):
+    pdf_url: Optional[str] = None
+    url: Optional[str] = None
+    doi: Optional[str] = None
+
+
+@router.post("/proxy-pdf")
+async def proxy_pdf(
+    body: ProxyPdfRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy-fetch a PDF from an external URL.
+
+    Tries, in order: pdf_url  ➜  Unpaywall via DOI  ➜  url.
+    Returns the raw PDF bytes so the frontend can display them in an iframe
+    without CORS / X-Frame-Options issues.
+    """
+    candidate_urls: list[str] = []
+    if body.pdf_url:
+        candidate_urls.append(body.pdf_url)
+    if body.doi:
+        # Unpaywall free API – very reliable for OA PDFs
+        clean_doi = body.doi.replace("https://doi.org/", "")
+        candidate_urls.append(
+            f"https://api.unpaywall.org/v2/{clean_doi}?email=researchhub@example.com"
+        )
+    if body.url:
+        candidate_urls.append(body.url)
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        for target in candidate_urls:
+            try:
+                # Special handling for Unpaywall (JSON API → gives us the real PDF link)
+                if "unpaywall.org" in target:
+                    resp = await client.get(target)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        oa = data.get("best_oa_location") or {}
+                        real_pdf = oa.get("url_for_pdf") or oa.get("url")
+                        if real_pdf:
+                            pdf_resp = await client.get(real_pdf)
+                            if pdf_resp.status_code == 200 and (
+                                b"%PDF" in pdf_resp.content[:10]
+                                or "pdf" in pdf_resp.headers.get("content-type", "")
+                            ):
+                                return Response(
+                                    content=pdf_resp.content,
+                                    media_type="application/pdf",
+                                    headers={"Content-Disposition": 'inline; filename="paper.pdf"'},
+                                )
+                    continue
+
+                resp = await client.get(target)
+                if resp.status_code == 200 and (
+                    b"%PDF" in resp.content[:10]
+                    or "pdf" in resp.headers.get("content-type", "")
+                ):
+                    return Response(
+                        content=resp.content,
+                        media_type="application/pdf",
+                        headers={"Content-Disposition": 'inline; filename="paper.pdf"'},
+                    )
+            except Exception as e:
+                print(f"[PROXY-PDF] Failed for {target}: {e}")
+                continue
+
+    raise HTTPException(status_code=404, detail="Could not fetch PDF from any available URL")
 
 
 @router.delete("/{paper_id}")
