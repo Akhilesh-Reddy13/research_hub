@@ -14,7 +14,8 @@ export default function AnimatedSection({
   children, 
   className = '', 
   style = {},
-  id 
+  id,
+  disableInitialAnimation = false 
 }) {
   return (
     <motion.section
@@ -26,7 +27,7 @@ export default function AnimatedSection({
         ...style,
       }}
       variants={sectionVariants}
-      initial="hidden"
+      initial={disableInitialAnimation ? "visible" : "hidden"}
       whileInView="visible"
       viewport={sectionViewportConfig}
     >
