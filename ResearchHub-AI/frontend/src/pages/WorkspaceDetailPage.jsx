@@ -93,7 +93,7 @@ export default function WorkspaceDetailPage() {
 
         {/* Right panel — Chat */}
         <div className="lg:col-span-3 h-[75vh]">
-          <ChatInterface workspaceId={parseInt(id)} />
+          <ChatInterface workspaceId={parseInt(id)} papers={papers} />
         </div>
       </div>
     </div>

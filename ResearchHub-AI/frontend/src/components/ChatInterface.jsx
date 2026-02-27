@@ -1,14 +1,41 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, UserIcon, Loader2 } from 'lucide-react';
+import { Send, Bot, UserIcon, Loader2, Plus, X, FileText, ChevronDown } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
-export default function ChatInterface({ workspaceId }) {
+export default function ChatInterface({ workspaceId, papers = [] }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(false);
+  const [selectedPaperIds, setSelectedPaperIds] = useState([]);
+  const [showPaperPicker, setShowPaperPicker] = useState(false);
   const messagesEndRef = useRef(null);
+  const pickerRef = useRef(null);
+
+  // Close picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) {
+        setShowPaperPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const addPaper = (paperId) => {
+    if (!selectedPaperIds.includes(paperId)) {
+      setSelectedPaperIds((prev) => [...prev, paperId]);
+    }
+    setShowPaperPicker(false);
+  };
+
+  const removePaper = (paperId) => {
+    setSelectedPaperIds((prev) => prev.filter((id) => id !== paperId));
+  };
+
+  const availablePapers = papers.filter((p) => !selectedPaperIds.includes(p.id));
 
   // Load conversation history on mount
   useEffect(() => {
@@ -44,10 +71,14 @@ export default function ChatInterface({ workspaceId }) {
     setLoading(true);
 
     try {
-      const res = await api.post('/chat', {
+      const payload = {
         message: userMsg,
         workspace_id: workspaceId,
-      });
+      };
+      if (selectedPaperIds.length > 0) {
+        payload.paper_ids = selectedPaperIds;
+      }
+      const res = await api.post('/chat', payload);
       setMessages((prev) => [
         ...prev,
         { role: 'ai', content: res.data.response },
@@ -135,13 +166,69 @@ export default function ChatInterface({ workspaceId }) {
 
       {/* Input area */}
       <div className="border-t border-gray-200 p-3">
+        {/* Selected papers chips */}
+        {selectedPaperIds.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {selectedPaperIds.map((pid) => {
+              const p = papers.find((pp) => pp.id === pid);
+              if (!p) return null;
+              return (
+                <span
+                  key={pid}
+                  className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-medium px-2.5 py-1 rounded-lg border border-blue-200"
+                >
+                  <FileText size={12} />
+                  <span className="max-w-[150px] truncate">{p.title}</span>
+                  <button
+                    onClick={() => removePaper(pid)}
+                    className="ml-0.5 hover:text-red-500 transition-colors"
+                    title="Remove paper"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
+          {/* Add paper button */}
+          <div className="relative" ref={pickerRef}>
+            <button
+              onClick={() => setShowPaperPicker((prev) => !prev)}
+              disabled={availablePapers.length === 0}
+              className="p-2.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl border border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={availablePapers.length === 0 ? 'All papers selected' : 'Add paper to context'}
+            >
+              <Plus size={18} />
+            </button>
+
+            {showPaperPicker && availablePapers.length > 0 && (
+              <div className="absolute bottom-full left-0 mb-2 w-72 bg-white rounded-xl shadow-lg border border-gray-200 z-50 max-h-56 overflow-y-auto">
+                <div className="px-3 py-2 border-b border-gray-100">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Add paper to context</p>
+                </div>
+                {availablePapers.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => addPaper(p.id)}
+                    className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors flex items-center gap-2"
+                  >
+                    <FileText size={14} className="text-gray-400 flex-shrink-0" />
+                    <span className="text-sm text-gray-700 truncate">{p.title}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
+            placeholder={selectedPaperIds.length > 0 ? `Ask about ${selectedPaperIds.length} selected paper(s)...` : 'Type your message (all papers used)...'}
             className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             disabled={loading}
           />
@@ -153,6 +240,9 @@ export default function ChatInterface({ workspaceId }) {
             <Send size={18} />
           </button>
         </div>
+        {selectedPaperIds.length === 0 && papers.length > 0 && (
+          <p className="text-xs text-gray-400 mt-1.5 ml-12">Click + to select specific papers, or ask about all papers</p>
+        )}
       </div>
     </div>
   );
