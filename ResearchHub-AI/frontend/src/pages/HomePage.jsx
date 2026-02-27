@@ -1,5 +1,9 @@
 import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useAuth } from '../utils/AuthContext';
+import AnimatedSection from '../components/AnimatedSection';
+import FeatureCard from '../components/FeatureCard';
+import { containerVariants, viewportConfig } from '../utils/motionVariants';
 import {
   Search,
   FolderOpen,
@@ -48,20 +52,38 @@ export default function HomePage() {
   const { isAuthenticated } = useAuth();
 
   return (
-    <div className="min-h-screen">
-      {/* Hero */}
-      <section className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white py-24 px-4">
+    <div className="scroll-container">
+      {/* Hero Section */}
+      <AnimatedSection 
+        id="hero"
+        className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex items-center justify-center px-4"
+      >
         <div className="max-w-4xl mx-auto text-center">
-          <div className="flex items-center justify-center gap-3 mb-6">
+          <motion.div 
+            className="flex items-center justify-center gap-3 mb-6"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.2 }}
+          >
             <FlaskConical size={48} />
             <h1 className="text-5xl font-extrabold tracking-tight">ResearchHub AI</h1>
-          </div>
-          <p className="text-xl text-blue-100 max-w-2xl mx-auto mb-10">
+          </motion.div>
+          <motion.p 
+            className="text-xl text-blue-100 max-w-2xl mx-auto mb-10"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+          >
             An intelligent, AI-powered platform for managing and analyzing academic
             research papers. Search, organize, and gain insights with the power of
             Google Gemini.
-          </p>
-          <div className="flex items-center justify-center gap-4 flex-wrap">
+          </motion.p>
+          <motion.div 
+            className="flex items-center justify-center gap-4 flex-wrap"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.6 }}
+          >
             {isAuthenticated ? (
               <Link
                 to="/dashboard"
@@ -85,32 +107,43 @@ export default function HomePage() {
                 </Link>
               </>
             )}
-          </div>
+          </motion.div>
         </div>
-      </section>
+      </AnimatedSection>
 
-      {/* Features */}
-      <section className="py-20 px-4 bg-gray-50">
-        <div className="max-w-6xl mx-auto">
-          <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">
+      {/* Features Section */}
+      <AnimatedSection 
+        id="features"
+        className="bg-gray-50 flex items-center justify-center px-4"
+      >
+        <div className="max-w-6xl mx-auto w-full">
+          <motion.h2 
+            className="text-3xl font-bold text-center text-gray-900 mb-12"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={viewportConfig}
+            transition={{ duration: 0.5 }}
+          >
             Everything You Need for Research
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          </motion.h2>
+          <motion.div 
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
+            variants={containerVariants}
+            initial="hidden"
+            whileInView="visible"
+            viewport={viewportConfig}
+          >
             {features.map((feat) => (
-              <div
+              <FeatureCard
                 key={feat.title}
-                className="bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-shadow"
-              >
-                <feat.icon className="text-blue-600 mb-3" size={28} />
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">
-                  {feat.title}
-                </h3>
-                <p className="text-sm text-gray-500">{feat.desc}</p>
-              </div>
+                icon={feat.icon}
+                title={feat.title}
+                desc={feat.desc}
+              />
             ))}
-          </div>
+          </motion.div>
         </div>
-      </section>
+      </AnimatedSection>
     </div>
   );
 }
