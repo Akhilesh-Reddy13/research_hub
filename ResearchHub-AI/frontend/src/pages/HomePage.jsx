@@ -124,7 +124,7 @@ export default function HomePage() {
 
             <p className="text-lg text-gray-400 max-w-lg mb-10 mx-auto lg:mx-0">
               An intelligent platform for managing and analyzing academic research. 
-              Search, organize, and gain insights with Google Gemini.
+              Search, organize, and gain insights with Groq.
             </p>
 
             <div className="flex items-center gap-4 flex-wrap justify-center lg:justify-start">
