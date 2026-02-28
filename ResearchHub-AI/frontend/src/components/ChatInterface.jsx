@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, UserIcon, Loader2, Plus, X, FileText, ChevronDown, Globe, Search } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
@@ -156,7 +158,13 @@ export default function ChatInterface({ workspaceId, papers = [] }) {
                   <span className="text-xs font-semibold text-green-600">Deep Research</span>
                 </div>
               )}
-              {msg.content}
+              {msg.role === 'ai' ? (
+                <div className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-headings:mt-3 prose-headings:mb-1.5 prose-p:my-1.5 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-gray-800 prose-a:text-blue-600 prose-code:bg-gray-100 prose-code:px-1 prose-code:rounded">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                </div>
+              ) : (
+                msg.content
+              )}
             </div>
           </div>
         ))}

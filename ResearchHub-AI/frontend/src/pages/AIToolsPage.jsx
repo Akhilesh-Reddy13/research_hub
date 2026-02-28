@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Wand2, Loader2, FileText, CheckSquare, Square } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
@@ -175,8 +177,8 @@ export default function AIToolsPage() {
               <span className="text-sm">Analyzing papers...</span>
             </div>
           ) : (
-            <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap">
-              {result}
+            <div className="prose prose-sm max-w-none text-gray-700 prose-headings:text-gray-800 prose-headings:mt-3 prose-headings:mb-1.5 prose-p:my-1.5 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-gray-800 prose-a:text-blue-600 prose-code:bg-gray-100 prose-code:px-1 prose-code:rounded">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
             </div>
           )}
         </div>

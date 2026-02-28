@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, FolderOpen, FileText } from 'lucide-react';
+import { Plus, FolderOpen, FileText, Trash2 } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
@@ -21,6 +21,18 @@ export default function WorkspacesPage() {
       toast.error('Failed to load workspaces');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (e, wsId, wsName) => {
+    e.stopPropagation();
+    if (!confirm(`Delete workspace "${wsName}"? This will also delete all papers and conversations in it.`)) return;
+    try {
+      await api.delete(`/workspaces/${wsId}`);
+      toast.success('Workspace deleted');
+      setWorkspaces((prev) => prev.filter((w) => w.id !== wsId));
+    } catch {
+      toast.error('Failed to delete workspace');
     }
   };
 
@@ -97,6 +109,13 @@ export default function WorkspacesPage() {
                 <FileText size={14} />
                 <span>{ws.paper_count || 0} papers</span>
                 <span className="ml-auto">{ws.created_at?.split('T')[0] || ''}</span>
+                <button
+                  onClick={(e) => handleDelete(e, ws.id, ws.name)}
+                  className="ml-2 p-1 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                  title="Delete workspace"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
             </div>
           ))}

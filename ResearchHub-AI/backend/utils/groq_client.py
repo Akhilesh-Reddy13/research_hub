@@ -176,51 +176,51 @@ def get_groq_browser_search_response(user_query: str) -> str:
                     ],
                     tools=[{"type": "browser_search"}],
                     temperature=0.3,
-                    max_completion_tokens=2048,
+                    max_completion_tokens=8192,
                 )
 
-                # Debug: log full response structure
                 message = chat_completion.choices[0].message
-                print(f"  Response finish_reason: {chat_completion.choices[0].finish_reason}")
-                print(f"  Message content type: {type(message.content)}, length: {len(message.content) if message.content else 0}")
+                finish_reason = chat_completion.choices[0].finish_reason
+                print(f"  Response finish_reason: {finish_reason}")
+                print(f"  Message content length: {len(message.content) if message.content else 0}")
 
-                # Check for tool_calls — if model returned tool calls instead of content,
-                # the executed_tools results may be in the response or we need to extract them
-                if hasattr(message, 'tool_calls') and message.tool_calls:
-                    print(f"  Tool calls found: {len(message.tool_calls)}")
-                    for tc in message.tool_calls:
-                        print(f"    Tool: {tc.function.name if hasattr(tc, 'function') else tc.type}")
-
-                # Try to get content — for built-in tools, Groq executes server-side
-                # and returns final content directly
                 result = message.content
 
-                # If content is None or empty, try to extract from executed_tools
+                # If content is empty (e.g. finish_reason=length), extract search
+                # results from executed_tools on the *message* object and do a
+                # follow-up call so the model can synthesise a proper answer.
                 if not result:
-                    # Log entire response for debugging
-                    print(f"  [DEBUG] Full response object keys: {dir(chat_completion.choices[0])}")
-                    print(f"  [DEBUG] Message keys: {dir(message)}")
-
-                    # Some Groq responses include executed_tools with results
-                    if hasattr(chat_completion, 'executed_tools') and chat_completion.executed_tools:
-                        print(f"  Found executed_tools: {len(chat_completion.executed_tools)}")
+                    search_context = ""
+                    # executed_tools lives on the message, not the top-level response
+                    executed = getattr(message, 'executed_tools', None)
+                    if executed:
+                        print(f"  Extracting search context from {len(executed)} executed_tools")
                         parts = []
-                        for et in chat_completion.executed_tools:
-                            if hasattr(et, 'output'):
-                                parts.append(str(et.output))
-                        if parts:
-                            result = "\n".join(parts)
+                        for et in executed:
+                            output = getattr(et, 'output', None)
+                            if output:
+                                parts.append(str(output))
+                        search_context = "\n".join(parts)
 
-                # If still empty, try dumping the raw response
-                if not result:
-                    try:
-                        raw = chat_completion.model_dump()
-                        print(f"  [DEBUG] Raw response dump: {json.dumps(raw, indent=2, default=str)[:2000]}")
-                    except Exception as dump_err:
-                        print(f"  [DEBUG] Could not dump response: {dump_err}")
+                    if search_context:
+                        # Make a follow-up call with the search results as context
+                        print(f"  Making follow-up call with {len(search_context)} chars of search context")
+                        _last_request_time = time.time()
+                        followup = _client.chat.completions.create(
+                            model=BROWSER_SEARCH_MODEL,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_query},
+                                {"role": "assistant", "content": f"I searched the web and found the following results:\n{search_context}"},
+                                {"role": "user", "content": "Based on these search results, please provide a comprehensive answer to the original query with citations."},
+                            ],
+                            temperature=0.3,
+                            max_completion_tokens=4096,
+                        )
+                        result = followup.choices[0].message.content
 
                 if not result:
-                    result = "Browser search returned no content. The model may not have generated a response. Please try rephrasing your query."
+                    result = "Browser search returned no content. Please try rephrasing your query."
 
                 print(f"  Browser search completed — {len(result)} chars returned")
                 return result
