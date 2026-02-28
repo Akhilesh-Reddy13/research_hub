@@ -1,8 +1,24 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Wand2, Loader2, FileText, CheckSquare, Square, Film, Headphones } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
+
+/**
+ * Normalize LaTeX delimiters so remark-math can parse them.
+ */
+function preprocessMath(text) {
+  if (!text) return text;
+  let s = text.replace(/\\\[([\s\S]*?)\\\]/g, '$$$$\n$1\n$$$$');
+  s = s.replace(/^\[\s*\n([\s\S]*?)\n\s*\]$/gm, '$$$$\n$1\n$$$$');
+  s = s.replace(/\\\(([^)]*?)\\\)/g, ' $$$1$$ ');
+  return s;
+}
 
 const tools = [
   { id: 'summarize', label: 'Summarize', desc: 'Get a concise summary of selected papers', min: 1 },
@@ -260,7 +276,7 @@ export default function AIToolsPage() {
             </div>
           ) : (
             <div className="prose prose-sm max-w-none text-gray-700 prose-headings:text-gray-800 prose-headings:mt-3 prose-headings:mb-1.5 prose-p:my-1.5 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-gray-800 prose-a:text-blue-600 prose-code:bg-gray-100 prose-code:px-1 prose-code:rounded">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{preprocessMath(result)}</ReactMarkdown>
             </div>
           )}
         </div>

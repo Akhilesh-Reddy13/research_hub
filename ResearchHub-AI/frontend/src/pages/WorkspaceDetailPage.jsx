@@ -115,7 +115,7 @@ export default function WorkspaceDetailPage() {
       )}
 
       {/* Split view */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6" style={{ minHeight: '70vh' }}>
+      <div className="grid grid-cols-1 lg:grid-cols-7 gap-6" style={{ minHeight: '70vh' }}>
         {/* Left panel — Papers */}
         <div className="lg:col-span-2 space-y-3 overflow-y-auto max-h-[75vh] pr-1">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
@@ -138,7 +138,7 @@ export default function WorkspaceDetailPage() {
         </div>
 
         {/* Right panel — Chat */}
-        <div className="lg:col-span-3 h-[75vh]">
+        <div className="lg:col-span-5 h-[75vh] min-w-0">
           <ChatInterface workspaceId={parseInt(id)} papers={papers} />
         </div>
       </div>

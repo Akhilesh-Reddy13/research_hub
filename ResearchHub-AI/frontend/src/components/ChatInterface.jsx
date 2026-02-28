@@ -2,8 +2,26 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, UserIcon, Loader2, Plus, X, FileText, ChevronDown, Globe, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
+
+/**
+ * Normalize LaTeX delimiters so remark-math can parse them.
+ * Converts \[ ... \] → $$ ... $$ and \( ... \) → $ ... $
+ */
+function preprocessMath(text) {
+  if (!text) return text;
+  // Block math: \[ ... \] or standalone [ ... ] on their own lines
+  let s = text.replace(/\\\[([\s\S]*?)\\\]/g, '$$$$\n$1\n$$$$');
+  // Also handle [ ... ] used as block math (on own line)
+  s = s.replace(/^\[\s*\n([\s\S]*?)\n\s*\]$/gm, '$$$$\n$1\n$$$$');
+  // Inline math: \( ... \)
+  s = s.replace(/\\\(([^)]*?)\\\)/g, ' $$$1$$ ');
+  return s;
+}
 
 export default function ChatInterface({ workspaceId, papers = [] }) {
   const [messages, setMessages] = useState([]);
@@ -109,9 +127,9 @@ export default function ChatInterface({ workspaceId, papers = [] }) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 rounded-lg border border-gray-200">
+    <div className="flex flex-col h-full min-w-0 overflow-hidden bg-gray-50 rounded-lg border border-gray-200">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {messages.length === 0 && (
           <div className="text-center text-gray-400 mt-12">
             <Bot size={48} className="mx-auto mb-3 text-gray-300" />
@@ -146,7 +164,7 @@ export default function ChatInterface({ workspaceId, papers = [] }) {
               )}
             </div>
             <div
-              className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+              className={`max-w-[85%] min-w-0 px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
                 msg.role === 'user'
                   ? 'bg-blue-500 text-white rounded-br-md'
                   : 'bg-white text-gray-800 rounded-bl-md shadow-sm border border-gray-100'
@@ -159,8 +177,8 @@ export default function ChatInterface({ workspaceId, papers = [] }) {
                 </div>
               )}
               {msg.role === 'ai' ? (
-                <div className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-headings:mt-3 prose-headings:mb-1.5 prose-p:my-1.5 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-gray-800 prose-a:text-blue-600 prose-code:bg-gray-100 prose-code:px-1 prose-code:rounded">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                <div className="prose prose-sm max-w-none overflow-x-auto prose-headings:text-gray-800 prose-headings:mt-3 prose-headings:mb-1.5 prose-p:my-1.5 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-gray-800 prose-a:text-blue-600 prose-code:bg-gray-100 prose-code:px-1 prose-code:rounded">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{preprocessMath(msg.content)}</ReactMarkdown>
                 </div>
               ) : (
                 msg.content
@@ -184,7 +202,7 @@ export default function ChatInterface({ workspaceId, papers = [] }) {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-gray-200 p-3">
+      <div className="flex-shrink-0 border-t border-gray-200 p-3">
         {/* Deep Research Mode indicator */}
         {webSearchEnabled && (
           <div className="flex items-center gap-1.5 mb-2 px-1">
