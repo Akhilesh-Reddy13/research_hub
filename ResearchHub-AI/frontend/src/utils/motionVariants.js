@@ -6,29 +6,17 @@
 // Custom easing for premium feel
 export const premiumEasing = [0.16, 1, 0.3, 1];
 
-// Section animation variants - book-style page flip
+// Section animation variants - smooth fade-in
 export const sectionVariants = {
   hidden: {
     opacity: 0,
-    y: 60,
-    scale: 0.98,
-    rotateX: 2,
+    y: 30,
   },
   visible: {
     opacity: 1,
     y: 0,
-    scale: 1,
-    rotateX: 0,
     transition: {
-      duration: 0.7,
-      ease: premiumEasing,
-    },
-  },
-  exit: {
-    opacity: 0.8,
-    y: -30,
-    transition: {
-      duration: 0.5,
+      duration: 0.8,
       ease: premiumEasing,
     },
   },
@@ -74,6 +62,6 @@ export const viewportConfig = {
 
 // Section viewport config (triggers earlier)
 export const sectionViewportConfig = {
-  once: false,
-  amount: 0.4,
+  once: true,
+  amount: 0.15,
 };

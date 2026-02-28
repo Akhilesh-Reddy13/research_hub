@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from utils.database import get_db
 from utils.auth_utils import get_current_user
 from utils.research_assistant import ResearchAssistant
-from utils.groq_client import QuotaExceededError
+from utils.groq_client import QuotaExceededError, get_groq_browser_search_response
 from utils import vector_store
 from models.user import User
 from models.workspace import Workspace
@@ -21,6 +21,8 @@ router = APIRouter()
 class ChatMessage(BaseModel):
     message: str
     workspace_id: int
+    paper_ids: list[int] | None = None  # When set, only these papers are used as context
+    web_search: bool = False  # When True, use Groq browser_search instead of paper context
 
 
 class ToolRequest(BaseModel):
@@ -48,10 +50,41 @@ async def chat(
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    # Fetch all papers in the workspace
-    papers_result = await db.execute(
-        select(Paper).where(Paper.workspace_id == body.workspace_id)
-    )
+    # --- Deep Research Mode: use Groq browser_search ---
+    if body.web_search:
+        try:
+            ai_text = get_groq_browser_search_response(body.message)
+        except QuotaExceededError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Web search failed: {str(e)}")
+
+        # Store conversation
+        conversation = Conversation(
+            workspace_id=body.workspace_id,
+            user_id=current_user.id,
+            user_message=body.message,
+            ai_response=ai_text,
+            is_web_search=True,
+        )
+        db.add(conversation)
+        await db.flush()
+
+        return {"response": ai_text, "is_web_search": True}
+
+    # --- Standard Mode: paper-context RAG with Llama 3.3 70B ---
+    # Fetch papers — only selected ones if paper_ids provided, else all in workspace
+    if body.paper_ids:
+        papers_result = await db.execute(
+            select(Paper).where(
+                Paper.id.in_(body.paper_ids),
+                Paper.workspace_id == body.workspace_id,
+            )
+        )
+    else:
+        papers_result = await db.execute(
+            select(Paper).where(Paper.workspace_id == body.workspace_id)
+        )
     papers = papers_result.scalars().all()
 
     # Retrieve relevant chunks from vector store for papers that have embeddings
@@ -82,11 +115,12 @@ async def chat(
         user_id=current_user.id,
         user_message=body.message,
         ai_response=ai_text,
+        is_web_search=False,
     )
     db.add(conversation)
     await db.flush()
 
-    return {"response": ai_text}
+    return {"response": ai_text, "is_web_search": False}
 
 
 @router.get("/history/{workspace_id}")
@@ -122,6 +156,7 @@ async def get_chat_history(
                 "id": c.id,
                 "user_message": c.user_message,
                 "ai_response": c.ai_response,
+                "is_web_search": c.is_web_search or False,
                 "created_at": str(c.created_at),
             }
             for c in conversations
@@ -169,7 +204,7 @@ async def run_ai_tool(
                 "findings": "key findings, results, conclusions, contributions",
             }.get(body.tool, body.tool)
             retrieved_chunks = vector_store.query_papers(
-                paper_ids_with_content, query_hint, n_results=5
+                paper_ids_with_content, query_hint, n_results=20
             )
         except Exception as e:
             print(f"[WARNING] Vector retrieval failed: {e}")

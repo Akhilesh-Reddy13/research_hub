@@ -9,8 +9,8 @@ from utils.database import init_db
 from utils.vector_store import init_vector_store
 from routers import auth, papers, workspaces, chat, storyboard
 
-# Accept any localhost origin (Vite may assign different ports each run)
-ALLOWED_ORIGIN_RE = re.compile(r"^http://localhost:\d+$")
+# Accept any localhost origin (Vite dev) or Docker internal origins
+ALLOWED_ORIGIN_RE = re.compile(r"^http://(localhost|frontend|127\.0\.0\.1)(:\d+)?$")
 
 
 def _is_allowed_origin(origin: str) -> bool:
@@ -39,7 +39,7 @@ app = FastAPI(title="ResearchHub AI API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^http://localhost:\d+$",
+    allow_origin_regex=r"^http://(localhost|frontend|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

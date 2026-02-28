@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Loader2 } from 'lucide-react';
+import { FileText, Loader2, Sparkles, Type } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import PaperCard from '../components/PaperCard';
@@ -12,6 +12,8 @@ export default function DocSpacePage() {
   const [selectedWs, setSelectedWs] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [isHybridResult, setIsHybridResult] = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -44,24 +46,54 @@ export default function DocSpacePage() {
     fetchAll();
   }, []);
 
+  // Hybrid search when search term changes
   useEffect(() => {
-    let filtered = allPapers;
+    const runSearch = async () => {
+      if (!searchTerm.trim()) {
+        // No search — show all papers (filtered by workspace)
+        let filtered = allPapers;
+        if (selectedWs !== 'all') {
+          filtered = filtered.filter((p) => String(p.workspace_id) === selectedWs);
+        }
+        setFilteredPapers(filtered);
+        setIsHybridResult(false);
+        return;
+      }
 
-    if (selectedWs !== 'all') {
-      filtered = filtered.filter((p) => String(p.workspace_id) === selectedWs);
-    }
-
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(
-        (p) =>
-          p.title?.toLowerCase().includes(term) ||
-          p.authors?.toLowerCase().includes(term)
-      );
-    }
-
-    setFilteredPapers(filtered);
-  }, [selectedWs, searchTerm, allPapers]);
+      setSearching(true);
+      try {
+        const params = { query: searchTerm };
+        if (selectedWs !== 'all') {
+          params.workspace_id = selectedWs;
+        }
+        const res = await api.get('/papers/search/hybrid', { params });
+        const results = (res.data.papers || []).map((p) => {
+          // Attach workspace_name from our cached list
+          const ws = workspaces.find((w) => w.id === p.workspace_id);
+          return { ...p, workspace_name: ws?.name || '' };
+        });
+        setFilteredPapers(results);
+        setIsHybridResult(true);
+      } catch {
+        // Fallback to client-side filter
+        let filtered = allPapers;
+        if (selectedWs !== 'all') {
+          filtered = filtered.filter((p) => String(p.workspace_id) === selectedWs);
+        }
+        const term = searchTerm.toLowerCase();
+        filtered = filtered.filter(
+          (p) =>
+            p.title?.toLowerCase().includes(term) ||
+            p.authors?.toLowerCase().includes(term)
+        );
+        setFilteredPapers(filtered);
+        setIsHybridResult(false);
+      } finally {
+        setSearching(false);
+      }
+    };
+    runSearch();
+  }, [selectedWs, searchTerm, allPapers, workspaces]);
 
   const handleDeletePaper = async (paper) => {
     if (!confirm('Delete this paper?')) return;
@@ -105,12 +137,32 @@ export default function DocSpacePage() {
         </select>
         <SearchBar
           onSearch={setSearchTerm}
-          placeholder="Filter by title or author..."
+          placeholder="Search papers (semantic + keyword)..."
         />
       </div>
 
+      {/* Search info */}
+      {isHybridResult && searchTerm.trim() && (
+        <div className="flex items-center gap-2 mb-4 px-1">
+          <span className="text-sm text-gray-500">
+            {filteredPapers.length} result{filteredPapers.length !== 1 ? 's' : ''} ranked by relevance
+          </span>
+          <span className="flex items-center gap-1 text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200">
+            <Sparkles size={10} /> Semantic
+          </span>
+          <span className="flex items-center gap-1 text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">
+            <Type size={10} /> Keyword
+          </span>
+        </div>
+      )}
+
       {/* Papers grid */}
-      {filteredPapers.length === 0 ? (
+      {searching ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 size={24} className="animate-spin text-blue-600 mr-2" />
+          <span className="text-gray-500">Searching...</span>
+        </div>
+      ) : filteredPapers.length === 0 ? (
         <div className="text-center py-16">
           <FileText size={48} className="mx-auto text-gray-300 mb-3" />
           <p className="text-gray-400">No documents found</p>
@@ -118,13 +170,30 @@ export default function DocSpacePage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredPapers.map((paper) => (
-            <PaperCard
-              key={paper.id}
-              paper={paper}
-              showDelete
-              onDelete={handleDeletePaper}
-              workspaceName={paper.workspace_name}
-            />
+            <div key={paper.id} className="relative">
+              {isHybridResult && paper.relevance_score != null && (
+                <div className="absolute -top-2 -right-2 z-10 flex items-center gap-1">
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded-full shadow-sm ${
+                      paper.relevance_score >= 0.5
+                        ? 'bg-green-100 text-green-700 border border-green-300'
+                        : paper.relevance_score >= 0.2
+                          ? 'bg-yellow-100 text-yellow-700 border border-yellow-300'
+                          : 'bg-gray-100 text-gray-600 border border-gray-300'
+                    }`}
+                    title={`Keyword: ${(paper.keyword_score * 100).toFixed(0)}% | Semantic: ${(paper.semantic_score * 100).toFixed(0)}%`}
+                  >
+                    {(paper.relevance_score * 100).toFixed(0)}% match
+                  </span>
+                </div>
+              )}
+              <PaperCard
+                paper={paper}
+                showDelete
+                onDelete={handleDeletePaper}
+                workspaceName={paper.workspace_name}
+              />
+            </div>
           ))}
         </div>
       )}

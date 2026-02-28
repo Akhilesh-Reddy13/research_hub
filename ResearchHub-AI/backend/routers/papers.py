@@ -7,6 +7,9 @@ from typing import Optional
 import httpx
 import PyPDF2
 import io
+import re
+import xml.etree.ElementTree as ET
+from collections import Counter
 
 from utils.database import get_db
 from utils.auth_utils import get_current_user
@@ -16,6 +19,13 @@ from models.paper import Paper
 from models.workspace import Workspace
 
 router = APIRouter()
+
+# Atom / arXiv XML namespaces
+_NS = {
+    "atom": "http://www.w3.org/2005/Atom",
+    "arxiv": "http://arxiv.org/schemas/atom",
+    "opensearch": "http://a9.com/-/spec/opensearch/1.1/",
+}
 
 
 # ---------- Pydantic schemas ----------
@@ -59,57 +69,84 @@ async def _fetch_pdf_bytes(url: str) -> Optional[bytes]:
         return None
 
 
-def reconstruct_abstract(inverted_index: dict) -> str:
-    """Reconstruct abstract text from OpenAlex inverted index format."""
-    if not inverted_index:
-        return ""
-    words = {}
-    for word, positions in inverted_index.items():
-        for pos in positions:
-            words[pos] = word
-    return " ".join(words[i] for i in sorted(words.keys()))
-
-
-def parse_openalex_results(data: dict) -> list:
-    """Parse OpenAlex API response into list of paper dicts."""
+def parse_arxiv_results(xml_text: str) -> list:
+    """Parse arXiv Atom XML response into a list of paper dicts."""
     papers = []
-    for work in data.get("results", []):
-        authors = ", ".join(
-            a.get("author", {}).get("display_name", "Unknown")
-            for a in work.get("authorships", [])
-        )
-        abstract = reconstruct_abstract(work.get("abstract_inverted_index"))
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        print(f"[ARXIV] XML parse error: {e}")
+        return []
 
-        # Get URL – prefer landing page, fallback to DOI
-        primary_location = work.get("primary_location") or {}
-        url = (
-            primary_location.get("landing_page_url")
-            or work.get("doi")
-            or ""
-        )
+    for entry in root.findall("atom:entry", _NS):
+        # Detect arXiv error entries
+        title_el = entry.find("atom:title", _NS)
+        title = (title_el.text or "Untitled").strip().replace("\n", " ") if title_el is not None else "Untitled"
+        title = re.sub(r"\s+", " ", title)
 
-        # Best available direct PDF link
-        pdf_url = (
-            primary_location.get("pdf_url")
-            or work.get("open_access", {}).get("oa_url")
-            or ""
-        )
-        # Also scan other locations for a pdf_url
-        if not pdf_url:
-            for loc in work.get("locations", []):
-                if loc.get("pdf_url"):
-                    pdf_url = loc["pdf_url"]
+        if title.lower() == "error":
+            continue  # skip error entries
+
+        # Authors
+        author_names = []
+        for author_el in entry.findall("atom:author", _NS):
+            name_el = author_el.find("atom:name", _NS)
+            if name_el is not None and name_el.text:
+                author_names.append(name_el.text.strip())
+        authors = ", ".join(author_names) if author_names else "Unknown"
+
+        # Abstract
+        summary_el = entry.find("atom:summary", _NS)
+        abstract = (summary_el.text or "").strip() if summary_el is not None else ""
+
+        # Published date — truncate to YYYY-MM-DD
+        pub_el = entry.find("atom:published", _NS)
+        published_date = ""
+        if pub_el is not None and pub_el.text:
+            published_date = pub_el.text.strip()[:10]
+
+        # URL (abstract page)
+        id_el = entry.find("atom:id", _NS)
+        url = (id_el.text or "").strip() if id_el is not None else ""
+
+        # PDF URL — look for <link> with title="pdf"
+        pdf_url = ""
+        for link_el in entry.findall("atom:link", _NS):
+            if link_el.get("title") == "pdf":
+                pdf_url = link_el.get("href", "")
+                break
+        # Fallback: derive PDF URL from the abstract URL
+        if not pdf_url and url:
+            pdf_url = url.replace("/abs/", "/pdf/")
+
+        # DOI — <arxiv:doi> element or <link title="doi">
+        doi = ""
+        doi_el = entry.find("arxiv:doi", _NS)
+        if doi_el is not None and doi_el.text:
+            doi = doi_el.text.strip()
+        if not doi:
+            for link_el in entry.findall("atom:link", _NS):
+                if link_el.get("title") == "doi":
+                    doi = link_el.get("href", "")
                     break
 
+        # Category
+        category = ""
+        cat_el = entry.find("arxiv:primary_category", _NS)
+        if cat_el is not None:
+            category = cat_el.get("term", "")
+
         papers.append({
-            "title": work.get("title", "Untitled"),
+            "title": title,
             "authors": authors,
             "abstract": abstract,
-            "doi": work.get("doi"),
+            "doi": doi or None,
             "url": url,
             "pdf_url": pdf_url,
-            "published_date": work.get("publication_date"),
+            "published_date": published_date or None,
+            "category": category,
         })
+
     return papers
 
 
@@ -126,21 +163,134 @@ async def search_papers(
     try:
         async with httpx.AsyncClient(timeout=15.0) as http_client:
             resp = await http_client.get(
-                "https://api.openalex.org/works",
-                params={"search": query, "per_page": 20},
+                "https://export.arxiv.org/api/query",
+                params={
+                    "search_query": f"all:{query}",
+                    "start": 0,
+                    "max_results": 20,
+                    "sortBy": "relevance",
+                    "sortOrder": "descending",
+                },
             )
             resp.raise_for_status()
-            data = resp.json()
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Error querying OpenAlex: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Error querying arXiv: {str(e)}")
 
-    papers = parse_openalex_results(data)
+    papers = parse_arxiv_results(resp.text)
     return {"papers": papers}
+
+
+# ---------- Hybrid Search Helpers ----------
+
+def _tokenize(text: str) -> list[str]:
+    """Lowercase tokenization, stripping non-alphanumeric chars."""
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _keyword_score(query_tokens: list[str], paper) -> float:
+    """Compute a keyword relevance score for a paper (0-1).
+
+    Weights: title match = 3x, author match = 2x, abstract match = 1x.
+    Score = weighted hits / (len(query_tokens) * max_weight) so it stays 0-1.
+    """
+    if not query_tokens:
+        return 0.0
+
+    title_tokens = set(_tokenize(paper.title or ""))
+    author_tokens = set(_tokenize(paper.authors or ""))
+    abstract_tokens = set(_tokenize(paper.abstract or ""))
+
+    score = 0.0
+    for qt in query_tokens:
+        if qt in title_tokens:
+            score += 3.0
+        if qt in author_tokens:
+            score += 2.0
+        if qt in abstract_tokens:
+            score += 1.0
+
+    max_possible = len(query_tokens) * 6.0  # 3 + 2 + 1
+    return min(score / max_possible, 1.0) if max_possible > 0 else 0.0
+
+
+@router.get("/search/hybrid")
+async def hybrid_search_papers(
+    query: str,
+    workspace_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search user's own papers using hybrid keyword + semantic ranking.
+
+    Returns papers sorted by combined score (0.4 keyword + 0.6 semantic).
+    """
+    if not query or not query.strip():
+        raise HTTPException(status_code=400, detail="Query parameter is required")
+
+    # Fetch user's papers (optionally filtered by workspace)
+    stmt = select(Paper).where(Paper.user_id == current_user.id)
+    if workspace_id is not None:
+        stmt = stmt.where(Paper.workspace_id == workspace_id)
+    result = await db.execute(stmt)
+    papers = result.scalars().all()
+
+    if not papers:
+        return {"papers": []}
+
+    query_tokens = _tokenize(query)
+    paper_ids = [p.id for p in papers]
+
+    # --- Keyword scoring ---
+    keyword_scores: dict[int, float] = {}
+    for p in papers:
+        keyword_scores[p.id] = _keyword_score(query_tokens, p)
+
+    # --- Semantic scoring (via ChromaDB) ---
+    semantic_scores: dict[int, float] = {}
+    try:
+        semantic_scores = vector_store.semantic_search_all(query, paper_ids, n_results=100)
+    except Exception as e:
+        print(f"[HYBRID SEARCH] Semantic scoring failed, using keyword only: {e}")
+
+    # --- Combine scores ---
+    KEYWORD_WEIGHT = 0.4
+    SEMANTIC_WEIGHT = 0.6
+
+    scored_papers = []
+    for p in papers:
+        kw = keyword_scores.get(p.id, 0.0)
+        sem = semantic_scores.get(p.id, 0.0)
+        combined = (KEYWORD_WEIGHT * kw) + (SEMANTIC_WEIGHT * sem)
+
+        # Only include papers with some relevance
+        if combined > 0.01 or kw > 0:
+            scored_papers.append({
+                "id": p.id,
+                "title": p.title,
+                "authors": p.authors,
+                "abstract": p.abstract,
+                "url": p.url,
+                "doi": p.doi,
+                "published_date": p.published_date,
+                "workspace_id": p.workspace_id,
+                "imported_at": str(p.imported_at),
+                "has_content": bool(p.content),
+                "has_pdf": bool(p.pdf_data),
+                "relevance_score": round(combined, 4),
+                "keyword_score": round(kw, 4),
+                "semantic_score": round(sem, 4),
+            })
+
+    # Sort by combined score descending
+    scored_papers.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+    return {"papers": scored_papers}
 
 
 @router.post("/import")
 async def import_paper(
     body: PaperImport,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -183,6 +333,11 @@ async def import_paper(
     db.add(paper)
     await db.flush()
     await db.refresh(paper)
+
+    # Embed paper content into ChromaDB for semantic search
+    embed_text = content or body.abstract or ""
+    if embed_text.strip():
+        background_tasks.add_task(_embed_paper_background, paper.id, embed_text)
 
     return {
         "message": "Paper imported successfully",
@@ -345,6 +500,51 @@ async def get_paper_pdf(
     )
 
 
+@router.get("/{paper_id}/preview")
+async def get_paper_content_preview(
+    paper_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return a text-based content preview for a paper.
+
+    Priority: abstract → stored content (first 1500 chars) → vector store chunks.
+    Used by the frontend fallback when the PDF cannot be rendered inline.
+    """
+    result = await db.execute(
+        select(Paper).where(Paper.id == paper_id, Paper.user_id == current_user.id)
+    )
+    paper = result.scalar_one_or_none()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    preview_text = ""
+
+    # 1. Use stored content (extracted PDF text)
+    if paper.content and paper.content.strip():
+        preview_text = paper.content.strip()
+    else:
+        # 2. Try vector store chunks as last resort
+        try:
+            chunks = vector_store.query_paper(
+                paper.id, paper.title or "summary overview", n_results=10
+            )
+            if chunks:
+                preview_text = "\n\n".join(chunks)
+        except Exception as e:
+            print(f"[PREVIEW] Vector store query failed for paper {paper_id}: {e}")
+
+    return {
+        "title": paper.title,
+        "authors": paper.authors,
+        "published_date": paper.published_date,
+        "doi": paper.doi,
+        "abstract": paper.abstract or "",
+        "content_preview": preview_text[:3000] if preview_text else "",
+        "has_full_content": len(preview_text) > 3000 if preview_text else False,
+    }
+
+
 @router.get("/{paper_id}/download")
 async def download_paper_pdf(
     paper_id: int,
@@ -365,6 +565,75 @@ async def download_paper_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+class ProxyPdfRequest(BaseModel):
+    pdf_url: Optional[str] = None
+    url: Optional[str] = None
+    doi: Optional[str] = None
+
+
+@router.post("/proxy-pdf")
+async def proxy_pdf(
+    body: ProxyPdfRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy-fetch a PDF from an external URL.
+
+    Tries, in order: pdf_url  ➜  Unpaywall via DOI  ➜  url.
+    Returns the raw PDF bytes so the frontend can display them in an iframe
+    without CORS / X-Frame-Options issues.
+    """
+    candidate_urls: list[str] = []
+    if body.pdf_url:
+        candidate_urls.append(body.pdf_url)
+    if body.doi:
+        # Unpaywall free API – very reliable for OA PDFs
+        clean_doi = body.doi.replace("https://doi.org/", "")
+        candidate_urls.append(
+            f"https://api.unpaywall.org/v2/{clean_doi}?email=researchhub@example.com"
+        )
+    if body.url:
+        candidate_urls.append(body.url)
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        for target in candidate_urls:
+            try:
+                # Special handling for Unpaywall (JSON API → gives us the real PDF link)
+                if "unpaywall.org" in target:
+                    resp = await client.get(target)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        oa = data.get("best_oa_location") or {}
+                        real_pdf = oa.get("url_for_pdf") or oa.get("url")
+                        if real_pdf:
+                            pdf_resp = await client.get(real_pdf)
+                            if pdf_resp.status_code == 200 and (
+                                b"%PDF" in pdf_resp.content[:10]
+                                or "pdf" in pdf_resp.headers.get("content-type", "")
+                            ):
+                                return Response(
+                                    content=pdf_resp.content,
+                                    media_type="application/pdf",
+                                    headers={"Content-Disposition": 'inline; filename="paper.pdf"'},
+                                )
+                    continue
+
+                resp = await client.get(target)
+                if resp.status_code == 200 and (
+                    b"%PDF" in resp.content[:10]
+                    or "pdf" in resp.headers.get("content-type", "")
+                ):
+                    return Response(
+                        content=resp.content,
+                        media_type="application/pdf",
+                        headers={"Content-Disposition": 'inline; filename="paper.pdf"'},
+                    )
+            except Exception as e:
+                print(f"[PROXY-PDF] Failed for {target}: {e}")
+                continue
+
+    raise HTTPException(status_code=404, detail="Could not fetch PDF from any available URL")
 
 
 @router.delete("/{paper_id}")

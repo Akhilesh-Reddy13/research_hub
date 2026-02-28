@@ -1,11 +1,14 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import AnimatedSection from '../components/AnimatedSection';
 import TypewriterEffect from '../components/TypewriterEffect';
 import KnowledgeGraph from '../components/KnowledgeGraph';
 import BentoCard from '../components/BentoCard';
 import ResearchTicker from '../components/ResearchTicker';
+import Lenis from 'lenis';
+import 'lenis/dist/lenis.css';
 import {
   Search,
   FolderOpen,
@@ -67,8 +70,30 @@ const bentoFeatures = [
 export default function HomePage() {
   const { isAuthenticated } = useAuth();
 
+  // Initialize Lenis smooth scroll on window
+  useEffect(() => {
+    const lenis = new Lenis({
+      duration: 1.2,
+      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+      smoothWheel: true,
+      smoothTouch: false,
+    });
+
+    let rafId;
+    function raf(time) {
+      lenis.raf(time);
+      rafId = requestAnimationFrame(raf);
+    }
+    rafId = requestAnimationFrame(raf);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      lenis.destroy();
+    };
+  }, []);
+
   return (
-    <div className="scroll-container hide-scrollbar">
+    <div>
       {/* ===== HERO SECTION ===== */}
       <AnimatedSection 
         id="hero"
@@ -99,7 +124,7 @@ export default function HomePage() {
 
             <p className="text-lg text-gray-400 max-w-lg mb-10 mx-auto lg:mx-0">
               An intelligent platform for managing and analyzing academic research. 
-              Search, organize, and gain insights with Google Gemini.
+              Search, organize, and gain insights with Groq.
             </p>
 
             <div className="flex items-center gap-4 flex-wrap justify-center lg:justify-start">
@@ -216,9 +241,14 @@ export default function HomePage() {
               Watch your research assistant work in real-time
             </p>
           </motion.div>
-          
-          <ResearchTicker />
+        </div>
 
+        {/* Ticker — full viewport width, breaks out of max-w container */}
+        <div className="w-screen relative left-1/2 -translate-x-1/2">
+          <ResearchTicker />
+        </div>
+
+        <div className="w-full max-w-7xl mx-auto px-4">
           {/* CTA */}
           <motion.div 
             className="text-center mt-16"

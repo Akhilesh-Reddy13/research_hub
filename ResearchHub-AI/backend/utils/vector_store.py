@@ -232,3 +232,46 @@ def has_embeddings(paper_id: int) -> bool:
         return len(existing["ids"]) > 0
     except Exception:
         return False
+
+
+def semantic_search_all(query: str, paper_ids: list[int], n_results: int = 50) -> dict[int, float]:
+    """Run a semantic search across all given paper IDs.
+
+    Returns a dict mapping paper_id → best cosine similarity score (0-1, higher = better).
+    ChromaDB returns cosine *distance* (0-2 for cosine space); we convert to similarity.
+    """
+    if not paper_ids:
+        return {}
+
+    collection = _get_collection()
+    try:
+        total = collection.count()
+        if total == 0:
+            return {}
+
+        safe_n = min(n_results, total)
+        results = collection.query(
+            query_texts=[query],
+            n_results=safe_n,
+            where={"paper_id": {"$in": paper_ids}},
+            include=["metadatas", "distances"],
+        )
+
+        distances = results.get("distances", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
+
+        # Keep the best (lowest distance) per paper, convert to similarity
+        best_scores: dict[int, float] = {}
+        for dist, meta in zip(distances, metas):
+            pid = meta.get("paper_id")
+            if pid is None:
+                continue
+            similarity = max(0.0, 1.0 - dist)  # cosine distance → similarity
+            if pid not in best_scores or similarity > best_scores[pid]:
+                best_scores[pid] = similarity
+
+        return best_scores
+    except Exception as e:
+        print(f"[VECTOR STORE] Semantic search failed: {e}")
+        return {}
+

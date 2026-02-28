@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===== Allow window-level smooth scroll (Lenis takes over) ===== */
+html {
+  scroll-behavior: auto;
+}
+
+html, body {
+  overflow-x: hidden;
+}
+
 /* ===== Full Page Scroll Snap ===== */
 .scroll-container {
   scroll-snap-type: y mandatory;
@@ -17,6 +26,20 @@
   scroll-snap-stop: always;
   position: relative;
   overflow: hidden;
+}
+
+/* ===== Lenis Smooth Scroll Wrapper ===== */
+.lenis-scroll-wrapper {
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100vh;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lenis-scroll-wrapper .scroll-section {
+  scroll-snap-align: unset;
+  scroll-snap-stop: unset;
+  overflow: visible;
 }
 
 /* ===== Page Shadow for Depth Illusion ===== */
@@ -68,24 +91,7 @@
 }
 
 /* ===== Section Transitions ===== */
-@supports (animation-timeline: scroll()) {
-  .scroll-section {
-    animation: sectionFade linear both;
-    animation-timeline: view();
-    animation-range: entry 0% cover 30%;
-  }
-
-  @keyframes sectionFade {
-    from {
-      opacity: 0.6;
-      transform: translateY(30px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-}
+/* Handled by Framer Motion in AnimatedSection */
 
 /* ===== Deep Navy Mesh Gradient Background ===== */
 .mesh-gradient-bg {

@@ -35,3 +35,23 @@ async def init_db():
     """Create all tables defined in SQLAlchemy models."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # --- Lightweight migrations for new columns ---
+    async with engine.begin() as conn:
+        from sqlalchemy import text, inspect as sa_inspect
+
+        def _check_column(sync_conn):
+            inspector = sa_inspect(sync_conn)
+            columns = [c["name"] for c in inspector.get_columns("conversations")]
+            return "is_web_search" in columns
+
+        try:
+            has_col = await conn.run_sync(_check_column)
+            if not has_col:
+                await conn.execute(
+                    text("ALTER TABLE conversations ADD COLUMN is_web_search BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+                print("[MIGRATION] Added 'is_web_search' column to conversations table")
+        except Exception as e:
+            # Table may not exist yet (first run) — create_all above handles that
+            print(f"[MIGRATION] Skipped is_web_search migration: {e}")
