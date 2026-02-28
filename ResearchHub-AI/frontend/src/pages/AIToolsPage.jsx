@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Wand2, Loader2, FileText, CheckSquare, Square } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Wand2, Loader2, FileText, CheckSquare, Square, Film } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
