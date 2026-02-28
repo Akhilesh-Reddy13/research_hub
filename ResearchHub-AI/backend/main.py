@@ -7,7 +7,7 @@ import threading
 import traceback
 from utils.database import init_db
 from utils.vector_store import init_vector_store
-from routers import auth, papers, workspaces, chat
+from routers import auth, papers, workspaces, chat, storyboard
 
 # Accept any localhost origin (Vite may assign different ports each run)
 ALLOWED_ORIGIN_RE = re.compile(r"^http://localhost:\d+$")
@@ -64,6 +64,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(papers.router, prefix="/api/papers", tags=["Papers"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["Workspaces"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(storyboard.router, prefix="/api/storyboard", tags=["Storyboard"])
 
 
 @app.get("/")

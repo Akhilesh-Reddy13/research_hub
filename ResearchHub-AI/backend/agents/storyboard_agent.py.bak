@@ -1,0 +1,88 @@
+"""
+Agent 2: Storyboard Writer Agent (LangChain)
+------------------------------------------------
+Uses a LangChain chain (ChatGroq) to generate cinematic storytelling
+narrations for each scene, grounding every narration in the paper summary.
+"""
+
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+_groq_api_key = os.getenv("GROQ_API_KEY", "")
+
+_llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=_groq_api_key,
+    temperature=0.8,
+) if _groq_api_key else None
+
+_storyboard_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a cinematic science storyteller. "
+     "You transform research papers into compelling visual narratives. "
+     "Every narration MUST be directly based on the paper summary — "
+     "do NOT add fictional events or unrelated dramatic content. "
+     "Stay faithful to the research while making it engaging and vivid. "
+     "You must respond ONLY with the narrations separated by '---SCENE_BREAK---'. "
+     "No numbering, no scene titles, just the narration text for each scene."
+     ),
+    ("human",
+     """Using the research summary and the 5 scenes below, create a powerful storyboard narration.
+
+For EACH scene, write:
+- A 3-5 sentence cinematic narration that explains the science from the paper and connects to the next scene
+- The narration must be a storytelling retelling of the actual research — what problem was tackled, how it was approached, what was found
+- Make it dramatic and engaging while staying 100% accurate to the research content below
+- Do NOT invent findings, researchers, or events that are not in the summary
+
+Separate each scene's narration with exactly: ---SCENE_BREAK---
+
+Research Summary:
+{summary}
+
+Scenes:
+{scenes_text}
+
+Respond with exactly {scene_count} narrations separated by ---SCENE_BREAK---"""),
+])
+
+_storyboard_chain = (_storyboard_prompt | _llm | StrOutputParser()) if _llm else None
+
+
+def create_storyboard(summary: str, scenes: list[dict]) -> list[dict]:
+    """Generate narration for each scene using LangChain.
+
+    Returns the scenes list enriched with a 'narration' key.
+    """
+    if _storyboard_chain is None:
+        raise RuntimeError("GROQ_API_KEY not configured")
+
+    scenes_text = ""
+    for i, s in enumerate(scenes, 1):
+        scenes_text += (
+            f"Scene {i}: {s.get('scene_title', 'Untitled')}\n"
+            f"  Description: {s.get('description', '')}\n"
+            f"  Visual: {s.get('image_prompt', '')}\n\n"
+        )
+
+    raw = _storyboard_chain.invoke({
+        "summary": summary,
+        "scenes_text": scenes_text,
+        "scene_count": len(scenes),
+    })
+
+    # Parse narrations and attach to scenes
+    narrations = [n.strip() for n in raw.split("---SCENE_BREAK---") if n.strip()]
+
+    enriched = []
+    for i, scene in enumerate(scenes):
+        s = dict(scene)
+        s["narration"] = narrations[i] if i < len(narrations) else scene.get("description", "")
+        enriched.append(s)
+
+    return enriched

@@ -1,0 +1,258 @@
+import { useState, useEffect } from 'react';
+import { Film, Loader2, Download, Image as ImageIcon, BookOpen, Layers } from 'lucide-react';
+import api from '../utils/api';
+import toast from 'react-hot-toast';
+
+export default function StoryboardPage() {
+  const [workspaces, setWorkspaces] = useState([]);
+  const [selectedWs, setSelectedWs] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null); // { session_id, summary, scenes, pdf_ready }
+  const [activeScene, setActiveScene] = useState(0);
+
+  useEffect(() => {
+    const loadWs = async () => {
+      try {
+        const res = await api.get('/workspaces');
+        setWorkspaces(res.data.workspaces || []);
+      } catch {
+        toast.error('Failed to load workspaces');
+      }
+    };
+    loadWs();
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!selectedWs) {
+      toast.error('Please select a workspace');
+      return;
+    }
+
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await api.post('/storyboard/generate', { workspace_id: parseInt(selectedWs) }, { timeout: 300000 });
+      setResult(res.data);
+      setActiveScene(0);
+      toast.success('Storyboard generated!');
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'Storyboard generation failed';
+      toast.error(detail);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!result?.session_id) return;
+    try {
+      const res = await api.get(`/storyboard/download/${result.session_id}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `research_storyboard_${result.session_id}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Failed to download PDF');
+    }
+  };
+
+  const imageUrl = (sceneUrl) => {
+    if (!sceneUrl) return null;
+    const token = localStorage.getItem('token');
+    return `http://localhost:8000${sceneUrl}?token=${token}`;
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-8">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6">
+        <Film size={28} className="text-purple-600" />
+        <h1 className="text-2xl font-bold text-gray-900">Research Storyboard Generator</h1>
+      </div>
+
+      {/* Workspace Selection */}
+      <div className="bg-white rounded-xl shadow-md p-6 mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Layers size={18} className="text-purple-600" />
+          <label className="text-sm font-medium text-gray-700">
+            Select a workspace to generate a storyboard from its papers
+          </label>
+        </div>
+        <select
+          value={selectedWs}
+          onChange={(e) => { setSelectedWs(e.target.value); setResult(null); }}
+          className="w-full max-w-md px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+        >
+          <option value="">Choose a workspace...</option>
+          {workspaces.map((ws) => (
+            <option key={ws.id} value={ws.id}>
+              {ws.name} ({ws.paper_count || 0} papers)
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-400 mt-2">
+          The AI will automatically summarize all papers in the workspace, then create a cinematic storyboard with images and a downloadable PDF.
+        </p>
+        <div className="mt-4">
+          <button
+            onClick={handleGenerate}
+            disabled={loading || !selectedWs}
+            className="inline-flex items-center gap-2 px-6 py-2.5 bg-purple-600 text-white rounded-lg font-semibold text-sm hover:bg-purple-700 disabled:opacity-50 transition-colors"
+          >
+            {loading ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Generating (this may take a minute)...
+              </>
+            ) : (
+              <>
+                <Film size={16} />
+                Generate Storyboard
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Loading State */}
+      {loading && (
+        <div className="bg-white rounded-xl shadow-md p-8 mb-6 text-center">
+          <Loader2 size={40} className="animate-spin text-purple-600 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-700 mb-2">Creating your storyboard...</h3>
+          <p className="text-sm text-gray-400">
+            Step 1: Summarizing papers → Step 2: Generating scenes &amp; images → Step 3: Writing narration → Step 4: Building PDF
+          </p>
+        </div>
+      )}
+
+      {/* Results */}
+      {result && (
+        <>
+          {/* Auto-generated Summary */}
+          {result.summary && (
+            <div className="bg-white rounded-xl shadow-md p-5 mb-6">
+              <details open>
+                <summary className="text-sm font-semibold text-gray-700 cursor-pointer flex items-center gap-2">
+                  <BookOpen size={16} className="text-purple-600" />
+                  Auto-Generated Research Summary
+                </summary>
+                <p className="mt-3 text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
+                  {result.summary}
+                </p>
+              </details>
+            </div>
+          )}
+
+          {/* Download bar */}
+          <div className="bg-white rounded-xl shadow-md p-4 mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <BookOpen size={18} />
+              <span>{result.scenes.length} scenes generated</span>
+            </div>
+            {result.pdf_ready && (
+              <button
+                onClick={handleDownload}
+                className="inline-flex items-center gap-2 px-5 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm hover:bg-green-700 transition-colors"
+              >
+                <Download size={16} />
+                Download PDF
+              </button>
+            )}
+          </div>
+
+          {/* Scene Tabs */}
+          <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+            {result.scenes.map((scene, i) => (
+              <button
+                key={i}
+                onClick={() => setActiveScene(i)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                  activeScene === i
+                    ? 'bg-purple-600 text-white shadow'
+                    : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                }`}
+              >
+                Scene {i + 1}
+              </button>
+            ))}
+          </div>
+
+          {/* Active Scene */}
+          {result.scenes[activeScene] && (
+            <div className="bg-white rounded-xl shadow-md overflow-hidden">
+              {/* Scene Image — always show section */}
+              <div className="bg-gray-900 flex items-center justify-center p-4 min-h-[200px]">
+                {result.scenes[activeScene].image_url ? (
+                  <img
+                    src={imageUrl(result.scenes[activeScene].image_url)}
+                    alt={result.scenes[activeScene].scene_title}
+                    className="max-h-96 rounded-lg object-contain"
+                    onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.style.display = 'none';
+                      e.target.nextSibling && (e.target.nextSibling.style.display = 'flex');
+                    }}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-gray-500 py-8">
+                    <ImageIcon size={48} className="mb-2 opacity-40" />
+                    <span className="text-sm">Image unavailable</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Scene Content */}
+              <div className="p-6">
+                <h2 className="text-xl font-bold text-gray-900 mb-1">
+                  Scene {activeScene + 1}: {result.scenes[activeScene].scene_title}
+                </h2>
+                <p className="text-sm text-purple-600 italic mb-4">
+                  {result.scenes[activeScene].description}
+                </p>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-gray-600 mb-2 flex items-center gap-2">
+                    <BookOpen size={14} /> Narration
+                  </h3>
+                  <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">
+                    {result.scenes[activeScene].narration}
+                  </p>
+                </div>
+
+                {/* Image prompt (collapsible) */}
+                <details className="mt-4">
+                  <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
+                    View image prompt
+                  </summary>
+                  <p className="mt-2 text-xs text-gray-400 bg-gray-50 p-3 rounded-lg">
+                    {result.scenes[activeScene].image_prompt}
+                  </p>
+                </details>
+              </div>
+
+              {/* Navigation */}
+              <div className="flex justify-between px-6 pb-6">
+                <button
+                  onClick={() => setActiveScene(Math.max(0, activeScene - 1))}
+                  disabled={activeScene === 0}
+                  className="px-4 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition-colors"
+                >
+                  ← Previous
+                </button>
+                <button
+                  onClick={() => setActiveScene(Math.min(result.scenes.length - 1, activeScene + 1))}
+                  disabled={activeScene === result.scenes.length - 1}
+                  className="px-4 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

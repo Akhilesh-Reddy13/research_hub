@@ -13,6 +13,7 @@ import WorkspaceDetailPage from './pages/WorkspaceDetailPage';
 import AIToolsPage from './pages/AIToolsPage';
 import UploadPage from './pages/UploadPage';
 import DocSpacePage from './pages/DocSpacePage';
+import StoryboardPage from './pages/StoryboardPage';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/workspaces" element={<ProtectedRoute><WorkspacesPage /></ProtectedRoute>} />
             <Route path="/workspace/:id" element={<ProtectedRoute><WorkspaceDetailPage /></ProtectedRoute>} />
             <Route path="/ai-tools" element={<ProtectedRoute><AIToolsPage /></ProtectedRoute>} />
+            <Route path="/storyboard" element={<ProtectedRoute><StoryboardPage /></ProtectedRoute>} />
             <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
             <Route path="/docspace" element={<ProtectedRoute><DocSpacePage /></ProtectedRoute>} />
           </Routes>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Wand2, Loader2, FileText, CheckSquare, Square } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Wand2, Loader2, FileText, CheckSquare, Square, Film } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
@@ -10,6 +11,7 @@ const tools = [
 ];
 
 export default function AIToolsPage() {
+  const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState([]);
   const [selectedWs, setSelectedWs] = useState('');
   const [papers, setPapers] = useState([]);
@@ -89,6 +91,27 @@ export default function AIToolsPage() {
       <div className="flex items-center gap-3 mb-6">
         <Wand2 size={28} className="text-purple-600" />
         <h1 className="text-2xl font-bold text-gray-900">AI Tools</h1>
+      </div>
+
+      {/* Storyboard Generator CTA */}
+      <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl shadow-lg p-5 mb-6 text-white">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <Film size={24} />
+            <div>
+              <h2 className="text-lg font-semibold">Research Visual Summary</h2>
+              <p className="text-purple-100 text-sm">
+                Generate an academic visual summary with architecture diagrams, flowcharts &amp; downloadable PDF
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/storyboard')}
+            className="px-5 py-2.5 bg-white text-purple-700 rounded-lg font-semibold text-sm hover:bg-purple-50 transition-colors shadow"
+          >
+            Generate Visual Summary →
+          </button>
+        </div>
       </div>
 
       {/* Step 1: Select workspace */}

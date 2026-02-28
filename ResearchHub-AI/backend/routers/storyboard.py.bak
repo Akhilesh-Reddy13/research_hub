@@ -1,0 +1,256 @@
+"""
+Storyboard Router (LangChain)
+-------------------------------
+Orchestrates the 3-agent pipeline via LangChain chains:
+  1. Storytelling Summary Agent → LangChain chain (summarize + storytelling)
+  2. Scene + Image Agent → LangChain chain + Gemini (4 imgs/30s)
+  3. Narration Agent → LangChain chain
+  4. PDF Generator Tool → ReportLab
+"""
+
+import uuid
+import os
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from dotenv import load_dotenv
+
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+from utils.database import get_db, async_session
+from utils.auth_utils import get_current_user, SECRET_KEY, ALGORITHM
+from utils import vector_store
+from models.user import User
+from models.workspace import Workspace
+from models.paper import Paper
+from agents.image_agent import generate_scenes, generate_images
+from agents.storyboard_agent import create_storyboard
+from agents.pdf_generator import generate_pdf, PDF_DIR
+
+from jose import JWTError, jwt
+
+load_dotenv()
+
+# ── LangChain Storytelling-Summary Chain ──
+_groq_api_key = os.getenv("GROQ_API_KEY", "")
+_summary_llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=_groq_api_key,
+    temperature=0.6,
+) if _groq_api_key else None
+
+_summary_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a research storytelling expert. "
+     "Given details of multiple research papers from a workspace, "
+     "produce a single coherent STORYTELLING summary (4-6 paragraphs). "
+     "Write it as a compelling narrative that tells the STORY of the research — "
+     "the problem that needed solving, the journey of the researchers, "
+     "the methods they chose, the discoveries they made, and the impact on the field. "
+     "Use vivid language and clear structure. Stay 100% faithful to the paper content. "
+     "Do NOT invent findings or data."
+     ),
+    ("human",
+     "Transform the following research papers into one cohesive storytelling summary. "
+     "Tell the narrative arc: problem → approach → discovery → significance.\n\n{papers_text}"),
+])
+
+_summary_chain = (_summary_prompt | _summary_llm | StrOutputParser()) if _summary_llm else None
+
+router = APIRouter()
+
+
+async def _user_from_query_token(token: str) -> User:
+    """Validate a JWT passed as a query parameter (for img/download URLs)."""
+    from models.user import User as UserModel
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    async with async_session() as session:
+        result = await session.execute(select(UserModel).where(UserModel.email == email))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+
+
+def _build_paper_summary(papers, retrieved_chunks: dict | None = None) -> str:
+    """Build a combined summary string from workspace papers for the agents."""
+    parts = []
+    for p in papers:
+        part = f"Title: {p.title}\nAuthors: {p.authors or 'N/A'}\nAbstract: {p.abstract or 'N/A'}"
+        if retrieved_chunks and p.id in retrieved_chunks:
+            chunks = retrieved_chunks[p.id]
+            part += "\nKey Content:\n" + "\n".join(chunks[:3])
+        elif p.content:
+            part += f"\nContent excerpt: {p.content[:600]}"
+        parts.append(part)
+    return "\n\n---\n\n".join(parts)
+
+
+def _generate_combined_summary(papers_text: str) -> str:
+    """Use LangChain chain to produce a storytelling research summary."""
+    if _summary_chain is None:
+        raise RuntimeError("GROQ_API_KEY not configured")
+    return _summary_chain.invoke({"papers_text": papers_text})
+
+
+# ── Pydantic schemas ──
+
+class StoryboardRequest(BaseModel):
+    workspace_id: int
+
+
+class SceneOut(BaseModel):
+    scene_title: str
+    description: str
+    image_prompt: str
+    narration: str = ""
+    image_url: str | None = None
+
+
+class StoryboardResponse(BaseModel):
+    session_id: str
+    summary: str  # the auto-generated summary shown to user
+    scenes: list[SceneOut]
+    pdf_ready: bool = False
+
+
+# ── Endpoints ──
+
+@router.post("/generate", response_model=StoryboardResponse)
+async def generate_storyboard(
+    body: StoryboardRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Full pipeline: papers → summary → scenes → images → storyboard → PDF."""
+
+    # Verify workspace belongs to user
+    ws_result = await db.execute(
+        select(Workspace).where(
+            Workspace.id == body.workspace_id,
+            Workspace.user_id == current_user.id,
+        )
+    )
+    workspace = ws_result.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Fetch papers
+    papers_result = await db.execute(
+        select(Paper).where(Paper.workspace_id == body.workspace_id)
+    )
+    papers = papers_result.scalars().all()
+    if not papers:
+        raise HTTPException(status_code=400, detail="No papers in this workspace")
+
+    # Retrieve vector chunks for richer context
+    paper_ids_with_content = [p.id for p in papers if p.content]
+    retrieved_chunks = {}
+    if paper_ids_with_content:
+        try:
+            retrieved_chunks = vector_store.query_papers(
+                paper_ids_with_content,
+                "summarize key findings, methodology, and contributions",
+                n_results=5,
+            )
+        except Exception as e:
+            print(f"[STORYBOARD] Vector retrieval failed: {e}")
+
+    # ── Step 0 (LangChain): Storytelling summary from papers ──
+    papers_text = _build_paper_summary(papers, retrieved_chunks)
+    try:
+        summary = _generate_combined_summary(papers_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Summary generation failed: {e}")
+
+    session_id = uuid.uuid4().hex[:12]
+
+    # ── Agent 1 (LangChain): Generate scenes ──
+    try:
+        scenes = generate_scenes(summary)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Scene generation failed: {e}")
+
+    # ── Agent 1b: Generate images (Gemini, 4/30s rate limit + fallback) ──
+    try:
+        image_paths = await generate_images(scenes, session_id)
+    except Exception as e:
+        print(f"[STORYBOARD] Image generation error: {e}")
+        image_paths = [None] * len(scenes)
+
+    # ── Agent 2 (LangChain): Create storyboard narrations ──
+    try:
+        enriched_scenes = create_storyboard(summary, scenes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storyboard creation failed: {e}")
+
+    # ── Agent 3: Generate PDF (ReportLab tool) ──
+    pdf_ready = False
+    try:
+        generate_pdf(summary, enriched_scenes, image_paths, session_id)
+        pdf_ready = True
+    except Exception as e:
+        print(f"[STORYBOARD] PDF generation failed: {e}")
+
+    # Build response with image URLs
+    scene_outputs = []
+    for i, scene in enumerate(enriched_scenes):
+        img_path = image_paths[i] if i < len(image_paths) else None
+        has_image = img_path is not None and os.path.exists(img_path)
+        scene_outputs.append(SceneOut(
+            scene_title=scene.get("scene_title", f"Scene {i + 1}"),
+            description=scene.get("description", ""),
+            image_prompt=scene.get("image_prompt", ""),
+            narration=scene.get("narration", ""),
+            image_url=f"/api/storyboard/image/{session_id}/{i + 1}" if has_image else None,
+        ))
+
+    return StoryboardResponse(
+        session_id=session_id,
+        summary=summary,
+        scenes=scene_outputs,
+        pdf_ready=pdf_ready,
+    )
+
+
+@router.get("/image/{session_id}/{scene_num}")
+async def get_scene_image(
+    session_id: str,
+    scene_num: int,
+    token: str = Query(...),
+):
+    """Serve a generated scene image (auth via query token for <img> tags)."""
+    await _user_from_query_token(token)
+    from agents.image_agent import IMAGES_DIR
+
+    path = os.path.join(IMAGES_DIR, session_id, f"scene_{scene_num}.png")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path, media_type="image/png")
+
+
+@router.get("/download/{session_id}")
+async def download_pdf(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Download the generated storyboard PDF."""
+    path = os.path.join(PDF_DIR, f"storyboard_{session_id}.pdf")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="PDF not found")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=f"research_storyboard_{session_id}.pdf",
+    )

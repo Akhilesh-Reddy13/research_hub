@@ -1,0 +1,340 @@
+"""
+Agent 1: Image Generation Agent (LangChain)
+----------------------------------------------
+Uses a LangChain chain (ChatGroq) to break a research summary into 5
+cinematic scenes with image prompts tightly tied to the paper content.
+
+Then generates images via Gemini (rate-limited to 4 images / 30 s) with a
+styled Pillow fallback so the feature always works.
+"""
+
+import json
+import os
+import random
+import re
+import time
+from dotenv import load_dotenv
+
+from PIL import Image, ImageDraw, ImageFont
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+
+load_dotenv()
+
+# ── Directories ──
+IMAGES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "generated_images")
+os.makedirs(IMAGES_DIR, exist_ok=True)
+
+# ── Gemini client (optional) ──
+_gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+_gemini_client = None
+genai_types = None
+if _gemini_api_key:
+    try:
+        from google import genai
+        from google.genai import types as _gt
+        genai_types = _gt
+        _gemini_client = genai.Client(api_key=_gemini_api_key)
+    except ImportError:
+        print("[IMAGE AGENT] google-genai not installed — Gemini disabled")
+
+GEMINI_IMAGE_MODEL = "gemini-2.0-flash-exp-image-generation"
+
+# ── Rate limiter: max 4 images per 30-second window ──
+_image_timestamps: list[float] = []
+RATE_LIMIT_WINDOW = 30  # seconds
+RATE_LIMIT_MAX = 4      # max images in that window
+
+
+def _wait_for_rate_limit():
+    """Block until we can generate another image within the 4-per-30s limit."""
+    now = time.time()
+    # Purge timestamps outside the window
+    while _image_timestamps and _image_timestamps[0] < now - RATE_LIMIT_WINDOW:
+        _image_timestamps.pop(0)
+
+    if len(_image_timestamps) >= RATE_LIMIT_MAX:
+        sleep_for = _image_timestamps[0] + RATE_LIMIT_WINDOW - now + 0.5
+        if sleep_for > 0:
+            print(f"[IMAGE AGENT] Rate limit: waiting {sleep_for:.1f}s (4 images / 30s)")
+            time.sleep(sleep_for)
+        now = time.time()
+        while _image_timestamps and _image_timestamps[0] < now - RATE_LIMIT_WINDOW:
+            _image_timestamps.pop(0)
+
+    _image_timestamps.append(time.time())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LangChain LLM & Chain for scene generation
+# ═══════════════════════════════════════════════════════════════════
+
+_groq_api_key = os.getenv("GROQ_API_KEY", "")
+_llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=_groq_api_key,
+    temperature=0.7,
+) if _groq_api_key else None
+
+_scene_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a research-paper visualization expert. "
+     "You convert research summaries into exactly 5 cinematic visual scenes. "
+     "Every scene and its image_prompt MUST directly depict concepts, findings, "
+     "or methodology from the paper — do NOT invent unrelated visuals. "
+     "Respond ONLY with a valid JSON array, no markdown fences, no extra text."
+     ),
+    ("human",
+     """Break the following research paper summary into exactly 5 cinematic scenes.
+Each scene must visualize a specific aspect of this research — its problem, method, data, findings, or impact.
+
+For each scene provide:
+- scene_title: short title referencing a specific paper concept
+- description: 1-2 sentences explaining what this scene depicts from the paper
+- image_prompt: a highly detailed image prompt that visually represents THIS specific part of the research (scientific illustration style, ultra detailed, 4K, cinematic lighting). The prompt must reference concrete elements from the paper summary.
+
+CRITICAL: Every image_prompt MUST be grounded in the paper content below. Do NOT generate generic sci-fi or unrelated imagery. Each prompt should depict the actual research concepts, tools, datasets, or findings mentioned in the summary.
+
+Respond ONLY with a JSON array of 5 objects.
+
+Research Summary:
+{summary}"""),
+])
+
+_scene_chain = (_scene_prompt | _llm | JsonOutputParser()) if _llm else None
+
+
+def generate_scenes(summary: str) -> list[dict]:
+    """Use LangChain chain to break a research summary into 5 cinematic scenes.
+
+    Returns a list of dicts with keys: scene_title, description, image_prompt
+    """
+    if _scene_chain is None:
+        raise RuntimeError("GROQ_API_KEY not configured")
+
+    try:
+        scenes = _scene_chain.invoke({"summary": summary})
+        if isinstance(scenes, list) and len(scenes) >= 1:
+            return scenes[:5]
+        raise ValueError(f"Expected list, got {type(scenes)}")
+    except Exception as first_err:
+        # Fallback: manual parse if the JSON parser chokes
+        print(f"[IMAGE AGENT] JsonOutputParser failed ({first_err}), trying manual parse")
+        raw = _llm.invoke(_scene_prompt.format_messages(summary=summary)).content
+        scenes = _parse_scenes_json(raw)
+        if scenes:
+            return scenes
+        raise ValueError(f"Failed to parse scene JSON: {raw[:300]}")
+
+
+def _parse_scenes_json(raw: str) -> list[dict] | None:
+    """Extract and parse JSON array from LLM output, handling code fences."""
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw)
+    cleaned = cleaned.strip().rstrip("`")
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, list) and len(data) >= 1:
+            return data[:5]
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\[.*\]", cleaned, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group())
+            if isinstance(data, list):
+                return data[:5]
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Styled Pillow placeholder generator — always available
+# ═══════════════════════════════════════════════════════════════════
+
+_PALETTES = [
+    [(20, 10, 50), (60, 30, 120), (140, 80, 220)],
+    [(10, 30, 50), (20, 80, 120), (60, 180, 220)],
+    [(40, 15, 15), (120, 30, 30), (220, 80, 60)],
+    [(10, 40, 30), (20, 100, 70), (60, 200, 140)],
+    [(40, 30, 10), (120, 90, 20), (220, 180, 60)],
+]
+
+
+def _create_placeholder_image(
+    scene_num: int, scene_title: str, description: str, path: str,
+    width: int = 1024, height: int = 768,
+) -> None:
+    palette = _PALETTES[scene_num % len(_PALETTES)]
+    bg_dark, bg_mid, accent = palette
+
+    img = Image.new("RGB", (width, height), bg_dark)
+    draw = ImageDraw.Draw(img)
+
+    for y in range(height):
+        t = y / height
+        r = int(bg_dark[0] + (bg_mid[0] - bg_dark[0]) * t)
+        g = int(bg_dark[1] + (bg_mid[1] - bg_dark[1]) * t)
+        b = int(bg_dark[2] + (bg_mid[2] - bg_dark[2]) * t)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+    random.seed(scene_num * 42)
+    for _ in range(18):
+        cx, cy = random.randint(0, width), random.randint(0, height)
+        radius = random.randint(30, 160)
+        alpha_val = random.randint(15, 45)
+        cc = (
+            min(255, accent[0] + random.randint(-20, 20)),
+            min(255, accent[1] + random.randint(-20, 20)),
+            min(255, accent[2] + random.randint(-20, 20)),
+        )
+        overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        od.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=(*cc, alpha_val))
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
+    draw = ImageDraw.Draw(img)
+    line_color = tuple(max(0, c - 40) for c in bg_mid)
+    for x in range(0, width, 80):
+        draw.line([(x, 0), (x, height)], fill=line_color, width=1)
+    for y_pos in range(0, height, 80):
+        draw.line([(0, y_pos), (width, y_pos)], fill=line_color, width=1)
+
+    badge_x, badge_y, badge_r = 60, 50, 36
+    draw.ellipse([badge_x - badge_r, badge_y - badge_r, badge_x + badge_r, badge_y + badge_r], fill=accent)
+
+    try:
+        font_large = ImageFont.truetype("arial.ttf", 38)
+        font_medium = ImageFont.truetype("arial.ttf", 26)
+        font_small = ImageFont.truetype("arial.ttf", 18)
+        font_badge = ImageFont.truetype("arialbd.ttf", 32)
+    except (IOError, OSError):
+        try:
+            font_large = ImageFont.truetype("DejaVuSans-Bold.ttf", 38)
+            font_medium = ImageFont.truetype("DejaVuSans.ttf", 26)
+            font_small = ImageFont.truetype("DejaVuSans.ttf", 18)
+            font_badge = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
+        except (IOError, OSError):
+            font_large = font_medium = font_small = font_badge = ImageFont.load_default()
+
+    draw.text((badge_x - 8, badge_y - 18), str(scene_num), fill=(255, 255, 255), font=font_badge)
+    title_text = f"SCENE {scene_num}: {scene_title.upper()}"
+    if len(title_text) > 45:
+        title_text = title_text[:42] + "..."
+    draw.text((120, 36), title_text, fill=(255, 255, 255), font=font_large)
+    draw.line([(60, 100), (width - 60, 100)], fill=accent, width=2)
+
+    for idx, line in enumerate(_word_wrap(description, 65)[:6]):
+        draw.text((60, 130 + idx * 34), line, fill=(200, 200, 220), font=font_medium)
+
+    draw.text((60, height - 50), "AI RESEARCH STORYBOARD",
+              fill=tuple(min(255, c + 60) for c in bg_mid), font=font_small)
+    draw.rectangle([(0, 0), (width, 24)], fill=(0, 0, 0))
+    draw.rectangle([(0, height - 24), (width, height)], fill=(0, 0, 0))
+    img.save(path, "PNG")
+
+
+def _word_wrap(text: str, max_chars: int = 60) -> list[str]:
+    words, lines, current = text.split(), [], ""
+    for w in words:
+        if current and len(current) + 1 + len(w) > max_chars:
+            lines.append(current)
+            current = w
+        else:
+            current = f"{current} {w}" if current else w
+    if current:
+        lines.append(current)
+    return lines
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Gemini image generation with 4-per-30s rate limiting + retry
+# ═══════════════════════════════════════════════════════════════════
+
+def _try_gemini_image(prompt: str, path: str, max_retries: int = 2) -> bool:
+    """Attempt to generate an image via Gemini with rate limiting.
+    Respects the 4-images-per-30-second window."""
+    if not _gemini_client or genai_types is None:
+        return False
+
+    _wait_for_rate_limit()
+
+    for attempt in range(max_retries):
+        try:
+            response = _gemini_client.models.generate_content(
+                model=GEMINI_IMAGE_MODEL,
+                contents=f"Generate an image: {prompt}",
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                ),
+            )
+            if response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data and part.inline_data.mime_type.startswith("image/"):
+                        with open(path, "wb") as f:
+                            f.write(part.inline_data.data)
+                        return True
+            return False
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                wait = 8 * (attempt + 1)
+                print(f"[IMAGE AGENT] Gemini rate-limited, waiting {wait}s "
+                      f"(attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait)
+                continue
+            print(f"[IMAGE AGENT] Gemini error: {e}")
+            return False
+    return False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Main entry point
+# ═══════════════════════════════════════════════════════════════════
+
+async def generate_images(scenes: list[dict], session_id: str) -> list[str]:
+    """Generate images for each scene.
+
+    Strategy:
+      1. Try Gemini API (rate-limited: 4 images per 30 s)
+      2. Fallback → styled Pillow placeholder (always works)
+
+    Returns list of local file paths (never None).
+    """
+    session_dir = os.path.join(IMAGES_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+
+    gemini_available = _gemini_client is not None
+    gemini_consecutive_fails = 0
+
+    image_paths: list[str] = []
+
+    for i, scene in enumerate(scenes):
+        prompt = scene.get("image_prompt", scene.get("description", "scientific illustration"))
+        title = scene.get("scene_title", f"Scene {i + 1}")
+        desc = scene.get("description", "")
+        path = os.path.join(session_dir, f"scene_{i + 1}.png")
+        saved = False
+
+        # ── Try Gemini (with rate limiter) ──
+        if gemini_available and gemini_consecutive_fails < 2:
+            print(f"[IMAGE AGENT] Scene {i + 1}: trying Gemini...")
+            saved = _try_gemini_image(prompt, path)
+            if saved:
+                print(f"[IMAGE AGENT] Scene {i + 1}: Gemini ✓")
+                gemini_consecutive_fails = 0
+            else:
+                gemini_consecutive_fails += 1
+                print(f"[IMAGE AGENT] Scene {i + 1}: Gemini failed "
+                      f"({gemini_consecutive_fails} consecutive)")
+
+        # ── Fallback: styled placeholder ──
+        if not saved:
+            print(f"[IMAGE AGENT] Scene {i + 1}: generating styled placeholder...")
+            _create_placeholder_image(i + 1, title, desc, path)
+            print(f"[IMAGE AGENT] Scene {i + 1}: placeholder ✓")
+
+        image_paths.append(path)
+
+    return image_paths
