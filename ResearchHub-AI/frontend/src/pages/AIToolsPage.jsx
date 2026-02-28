@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wand2, Loader2, FileText, CheckSquare, Square, Film } from 'lucide-react';
+import { Wand2, Loader2, FileText, CheckSquare, Square, Film, Headphones } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
@@ -20,6 +20,8 @@ export default function AIToolsPage() {
   const [result, setResult] = useState('');
   const [processing, setProcessing] = useState(false);
   const [cooldown, setCooldown] = useState(false);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioUrl, setAudioUrl] = useState(null);
 
   useEffect(() => {
     const loadWs = async () => {
@@ -86,6 +88,24 @@ export default function AIToolsPage() {
     }
   };
 
+  const handleGenerateAudio = async () => {
+    if (!selectedWs) {
+      toast.error('Please select a workspace first');
+      return;
+    }
+    setAudioLoading(true);
+    setAudioUrl(null);
+    try {
+      const res = await api.post(`/audio/generate/${selectedWs}`, {}, { timeout: 120000 });
+      setAudioUrl(`http://localhost:8000${res.data.audio_url}`);
+      toast.success('Audio summary generated!');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Audio generation failed');
+    } finally {
+      setAudioLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <div className="flex items-center gap-3 mb-6">
@@ -112,6 +132,47 @@ export default function AIToolsPage() {
             Generate Visual Summary →
           </button>
         </div>
+      </div>
+
+      {/* Audio Summary CTA */}
+      <div className="bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl shadow-lg p-5 mb-6 text-white">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <Headphones size={24} />
+            <div>
+              <h2 className="text-lg font-semibold">Audio Summary</h2>
+              <p className="text-emerald-100 text-sm">
+                Listen to an AI-narrated audio summary of your workspace research
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleGenerateAudio}
+            disabled={audioLoading || !selectedWs}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-emerald-700 rounded-lg font-semibold text-sm hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow"
+          >
+            {audioLoading ? (
+              <><Loader2 size={16} className="animate-spin" /> Generating...</>
+            ) : (
+              <>🎧 Generate Audio Summary</>
+            )}
+          </button>
+        </div>
+        {!selectedWs && (
+          <p className="text-emerald-200 text-xs mt-2">↓ Select a workspace below first</p>
+        )}
+        {audioUrl && (
+          <div className="mt-4 bg-white/10 rounded-lg p-4">
+            <audio controls src={audioUrl} className="w-full mb-2" />
+            <a
+              href={audioUrl}
+              download
+              className="inline-flex items-center gap-1 text-xs text-emerald-100 hover:text-white transition-colors"
+            >
+              ⬇ Download MP3
+            </a>
+          </div>
+        )}
       </div>
 
       {/* Step 1: Select workspace */}

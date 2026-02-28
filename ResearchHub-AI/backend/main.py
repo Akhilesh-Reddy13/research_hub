@@ -1,13 +1,15 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import re
+import os
 import threading
 import traceback
 from utils.database import init_db
 from utils.vector_store import init_vector_store
-from routers import auth, papers, workspaces, chat, storyboard
+from routers import auth, papers, workspaces, chat, storyboard, audio
 
 # Accept any localhost origin (Vite dev) or Docker internal origins
 ALLOWED_ORIGIN_RE = re.compile(r"^http://(localhost|frontend|127\.0\.0\.1)(:\d+)?$")
@@ -65,6 +67,12 @@ app.include_router(papers.router, prefix="/api/papers", tags=["Papers"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["Workspaces"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(storyboard.router, prefix="/api/storyboard", tags=["Storyboard"])
+app.include_router(audio.router, prefix="/api/audio", tags=["Audio"])
+
+# Mount media directory for serving generated audio files
+MEDIA_DIR = os.path.join(os.path.dirname(__file__), "media")
+os.makedirs(MEDIA_DIR, exist_ok=True)
+app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 
 @app.get("/")
