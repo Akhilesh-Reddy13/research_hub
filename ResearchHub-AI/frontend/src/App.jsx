@@ -14,6 +14,8 @@ import AIToolsPage from './pages/AIToolsPage';
 import UploadPage from './pages/UploadPage';
 import DocSpacePage from './pages/DocSpacePage';
 import StoryboardPage from './pages/StoryboardPage';
+import LatexEditorPage from './pages/LatexEditorPage';
+import LatexLandingPage from './pages/LatexLandingPage';
 
 export default function App() {
   return (
@@ -34,6 +36,8 @@ export default function App() {
             <Route path="/storyboard" element={<ProtectedRoute><StoryboardPage /></ProtectedRoute>} />
             <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
             <Route path="/docspace" element={<ProtectedRoute><DocSpacePage /></ProtectedRoute>} />
+            <Route path="/latex" element={<ProtectedRoute><LatexLandingPage /></ProtectedRoute>} />
+            <Route path="/latex/:id" element={<ProtectedRoute><LatexEditorPage /></ProtectedRoute>} />
           </Routes>
         </main>
       </BrowserRouter>

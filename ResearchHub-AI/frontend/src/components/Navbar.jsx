@@ -11,6 +11,7 @@ const navLinks = [
   { to: '/ai-tools', label: 'AI Tools' },
   { to: '/upload', label: 'Upload' },
   { to: '/docspace', label: 'Doc Space' },
+  { to: '/latex', label: 'LaTeX Editor' },
 ];
 
 export default function Navbar() {

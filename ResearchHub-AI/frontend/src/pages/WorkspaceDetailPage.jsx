@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
-import { Loader2, Trash2, Headphones, Download } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Loader2, Trash2, Headphones, Download, FileCode2 } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import ChatInterface from '../components/ChatInterface';
@@ -8,6 +8,7 @@ import PaperCard from '../components/PaperCard';
 
 export default function WorkspaceDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [workspace, setWorkspace] = useState(null);
   const [papers, setPapers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -85,6 +86,12 @@ export default function WorkspaceDetailPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate(`/latex/${id}`)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg text-sm font-medium hover:bg-gray-900 transition-colors"
+          >
+            <FileCode2 size={16} /> LaTeX Editor
+          </button>
           <button
             onClick={handleGenerateAudio}
             disabled={audioLoading}

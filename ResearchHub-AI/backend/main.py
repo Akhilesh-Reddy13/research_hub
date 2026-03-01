@@ -9,7 +9,7 @@ import threading
 import traceback
 from utils.database import init_db
 from utils.vector_store import init_vector_store
-from routers import auth, papers, workspaces, chat, storyboard, audio
+from routers import auth, papers, workspaces, chat, storyboard, audio, latex
 
 # Accept any localhost origin (Vite dev) or Docker internal origins
 ALLOWED_ORIGIN_RE = re.compile(r"^http://(localhost|frontend|127\.0\.0\.1)(:\d+)?$")
@@ -68,6 +68,7 @@ app.include_router(workspaces.router, prefix="/api/workspaces", tags=["Workspace
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(storyboard.router, prefix="/api/storyboard", tags=["Storyboard"])
 app.include_router(audio.router, prefix="/api/audio", tags=["Audio"])
+app.include_router(latex.router, prefix="/api/latex", tags=["LaTeX"])
 
 # Mount media directory for serving generated audio files
 MEDIA_DIR = os.path.join(os.path.dirname(__file__), "media")
